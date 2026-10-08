@@ -1,0 +1,21 @@
+# vim:ft=plumed
+# OPES paper (JPCL 2020), alanine dipeptide
+# from invemichele/opes ala2/plumed-opes.dat, with STATE_WSTRIDE=500*100 instead of 10000
+phi: TORSION ATOMS=5,7,9,15
+psi: TORSION ATOMS=7,9,15,17
+
+opes: OPES_METAD ...
+  ARG=phi,psi
+  TEMP=300.0
+  PACE=500
+  SIGMA=0.15,0.15
+  BARRIER=50
+  BIASFACTOR=10
+  STATE_WFILE=STATE
+  STATE_WSTRIDE=500*100
+  STORE_STATES
+...
+
+PRINT FMT=%g STRIDE=500 FILE=COLVAR ARG=phi,psi,opes.*
+
+ENDPLUMED

@@ -1,0 +1,66 @@
+name: validate
+
+# Compare two PLUMED versions on the OPES validation systems.
+# Triggered manually; on GitHub-hosted runners (4 cores) use the smoke tier,
+# the quick and full tiers are meant for a larger (self-hosted) machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref_a:
+        description: "reference PLUMED ref (branch, tag, SHA, or pr/<N>)"
+        default: "v2.9"
+        required: true
+      ref_b:
+        description: "candidate PLUMED ref (branch, tag, SHA, or pr/<N>)"
+        required: true
+      repo:
+        description: "PLUMED repository"
+        default: "https://github.com/plumed/plumed2.git"
+      gromacs:
+        description: "GROMACS version (needs a patch in the reference PLUMED)"
+        default: "2024.3"
+      tier:
+        description: "tier"
+        type: choice
+        options: [smoke, quick, full]
+        default: smoke
+      systems:
+        description: "comma separated systems (empty for all)"
+        default: ""
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      REF_A: ${{ inputs.ref_a }}
+      REF_B: ${{ inputs.ref_b }}
+      REPO: ${{ inputs.repo }}
+      GROMACS: ${{ inputs.gromacs }}
+      TIER: ${{ inputs.tier }}
+      SYSTEMS: ${{ inputs.systems }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: build PLUMED A
+        run: build/build_plumed.sh A "$REF_A" "$REPO"
+      - name: build PLUMED B
+        run: build/build_plumed.sh B "$REF_B" "$REPO"
+      - name: build GROMACS
+        run: build/build_gromacs.sh "$GROMACS" A
+      - name: run
+        run: python -m opesval run -p A B -t "$TIER" ${SYSTEMS:+-s "$SYSTEMS"} --gromacs "$GROMACS"
+      - name: compare
+        run: python -m opesval compare A B -t "$TIER" ${SYSTEMS:+-s "$SYSTEMS"} -o report
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-${{ inputs.tier }}
+          path: |
+            report
+            runs/*/*/*/*/*/run.json
+            runs/*/*/*/*/*/analysis.*

@@ -1,0 +1,19 @@
+nstep             @NSTEP@
+tstep             0.005
+temperature       1.0
+friction          10.0
+random_seed       @SEED@
+plumed_input      plumed.dat
+dimension         2
+replicas          1
+basis_functions_1 BF_POWERS ORDER=4 MINIMUM=-3.0 MAXIMUM=+3.0
+basis_functions_2 BF_POWERS ORDER=4 MINIMUM=-3.0 MAXIMUM=+3.0
+input_coeffs       potential.dat
+initial_position   @X0@,@Y0@
+output_coeffs           /dev/null
+output_potential        /dev/null
+output_potential_grid   10
+output_histogram        /dev/null
+
+# from invemichele/opes model/inputs/md_input.dat, single replica per run
+# seed and initial position of each replica are in replicas.dat

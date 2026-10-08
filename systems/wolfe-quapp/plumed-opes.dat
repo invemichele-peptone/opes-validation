@@ -1,0 +1,20 @@
+# vim:ft=plumed
+# OPES paper (JPCL 2020), modified Wolfe-Quapp potential
+# from invemichele/opes model/opes-model/plumed.dat, with STATE output added
+UNITS NATURAL
+
+p: POSITION ATOM=1
+
+opes: OPES_METAD ...
+  ARG=p.x
+  PACE=500
+  SIGMA=0.185815
+  BARRIER=10
+  STATE_WFILE=STATE
+  STATE_WSTRIDE=500*400
+  STORE_STATES
+...
+
+PRINT FMT=%g STRIDE=500 FILE=COLVAR ARG=p.x,p.y,opes.*
+
+ENDPLUMED

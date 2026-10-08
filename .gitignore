@@ -1,0 +1,5 @@
+/opt/
+/runs/
+/reports/
+/.venv/
+__pycache__/
