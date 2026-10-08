@@ -74,9 +74,10 @@ only with `--optional` or when selected with `-m`.
 |---|---|---|---|---|---|
 | `smoke` | 4 × 4·10⁵ | 4 × 10⁶ | 4 × 2.5·10⁵ | 4 × 2.5·10⁵ | < 1 min |
 | `quick` | 100 × 4·10⁶ | 25 × 2·10⁷ | 10 × 5·10⁶ | 10 × 10⁷ | ~45 min (estimate) |
+| `early` (ala2 only) | - | - | 100 × 10⁶ | - | ~12 min |
 | `full` (as in the papers) | 100 × 2·10⁷ | 25 × 2·10⁸ | 10 × 5·10⁶ | 10 × 10⁷ | ~4-5 h (estimate) |
 
-Replicas × MD steps, per method; mueller dominates the cost. `smoke` only checks that everything
+Replicas × MD steps, per method; mueller dominates the cost. `early` resolves the initial transient of ala2 with many short runs. `smoke` only checks that everything
 runs. It has no statistical power.
 
 ## Regenerating the GROMACS inputs
@@ -85,7 +86,7 @@ The `.tpr` files in `systems/*/tpr/` were generated with GROMACS 2024.3 and can 
 newer version. To regenerate them, e.g. after changing `md.mdp`:
 
 ```bash
-build/make_tprs.sh ala2 2024.3
+build/make_tprs.sh ala2 2024.3 100
 build/make_tprs.sh ala4 2024.3
 ```
 

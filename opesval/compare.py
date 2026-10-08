@@ -124,6 +124,8 @@ def compare_method(system, method, runs_a, runs_b):
             for i in checkpoints(n):
                 add(f"{kind}(t={fmt(ta[i])})", xa[:, i], xb[:, i])
             add(f"rmse_{kind} (2nd half)", get(ra, f"rmse_{kind}"), get(rb, f"rmse_{kind}"))
+            # largest undershoot, e.g. a basin overfilled right after the first transition
+            add(f"min {kind}", np.nanmin(xa, axis=1), np.nanmin(xb, axis=1))
         add("t_first (A to B)", get(ra, "t_first"), get(rb, "t_first"), kind="time")
         plot["t_first"] = (get(ra, "t_first"), get(rb, "t_first"))
     else:

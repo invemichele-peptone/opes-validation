@@ -165,7 +165,13 @@ SYSTEMS = {
                 Method("opes", "plumed-opes.dat", "EXPLORE"),
                 Method("explore", "plumed-explore.dat", "EXPLORE"),
             ),
-            tiers={"full": Tier(10, 5_000_000), "quick": Tier(10, 5_000_000), "smoke": Tier(4, 250_000)},
+            # early: many short runs, for the initial transient (100 replicas from 10 configurations)
+            tiers={
+                "full": Tier(10, 5_000_000),
+                "quick": Tier(10, 5_000_000),
+                "early": Tier(100, 1_000_000),
+                "smoke": Tier(4, 250_000),
+            },
             analysis=TwoBasins(
                 cv="phi",
                 in_B=ALA2_IN_B,

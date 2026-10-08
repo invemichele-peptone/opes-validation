@@ -30,7 +30,7 @@ Common to all systems:
   gmx editconf -f opes/ala2/inputs/input.0.tpr -o conf.0.gro -box 3.02334 -c
   ```
   All of them start in the phi < 0 basin(s).
-- `tpr/` is generated with `build/make_tprs.sh <system>` using GROMACS 2024.3. `gmx check` against the masterclass `input.tpr` shows only the expected differences: coordinates, velocities, seeds, and `rlist`, which GROMACS 2024 recomputes for the Verlet buffer.
+- `tpr/` is generated with `build/make_tprs.sh <system>` using GROMACS 2024.3. Replica *i* starts from `conf.<i % 10>.gro` with seed 1000 + *i*. ala2 has 100 replicas, for the `early` tier. `gmx check` against the masterclass `input.tpr` shows only the expected differences: coordinates, velocities, seeds, and `rlist`, which GROMACS 2024 recomputes for the Verlet buffer.
 - ala2: `STATE_WSTRIDE=500*100` for `opes_jpcl`, instead of 10000.
 - ala4: `ala4/explore/plumed.dat` in the Explore paper repository reads `OPES_METAD`, apparently a copy of `ala4/opes/plumed.dat`. Here `plumed-explore.dat` uses `OPES_METAD_EXPLORE`. Only the "bad CVs, standard parameters" setup (`psi-std`) is included.
 
