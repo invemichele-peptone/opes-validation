@@ -1,4 +1,4 @@
-"""Command line interface: python -m opesval {list,run,analyze,compare} ..."""
+"""Command line interface: opesval {list,run,analyze,compare} ... (or python -m opesval)"""
 
 import argparse
 import os

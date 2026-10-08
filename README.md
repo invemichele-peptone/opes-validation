@@ -14,12 +14,11 @@ from the papers.
 
 ## Quick start
 
-Requirements: a C++ compiler, `make`, `cmake`, `git`, `curl`, and Python ≥ 3.10.
+Requirements: a C++ compiler, `make`, `cmake`, `git`, `curl`, and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# python environment for the analysis
-uv venv && uv pip install -r requirements.txt && source .venv/bin/activate
-# or: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# python environment in .venv, from pyproject.toml and uv.lock
+uv sync
 
 # PLUMED versions to compare: build/build_plumed.sh <label> <ref> [repo]
 build/build_plumed.sh v2.9-base d650dbd5a52ea8954950f823da5214f54bf837b5
@@ -29,9 +28,9 @@ build/build_plumed.sh pr1463 pr/1463
 build/build_gromacs.sh 2024.3 v2.9-base
 
 # run both versions, interleaved, on all cores
-python -m opesval run -p v2.9-base pr1463 -t quick
+uv run opesval run -p v2.9-base pr1463 -t quick
 # report in reports/v2.9-base_vs_pr1463/quick/report.md
-python -m opesval compare v2.9-base pr1463 -t quick
+uv run opesval compare v2.9-base pr1463 -t quick
 ```
 
 Everything is installed in `opt/`, runs go in `runs/`, reports in `reports/` (all git-ignored).
@@ -59,13 +58,13 @@ Completed runs are reused, so `run` can be interrupted and restarted, or extende
 ## Commands
 
 ```
-python -m opesval list                          # systems, methods, tiers
-python -m opesval run -p LABEL [LABEL ...]      # -s systems -m methods -t tier -r replicas -j jobs
-python -m opesval analyze -p LABEL              # redo the analysis of completed runs
-python -m opesval compare A B -t TIER           # write the report (--strict: exit 1 if anything is marked)
+uv run opesval list                          # systems, methods, tiers
+uv run opesval run -p LABEL [LABEL ...]      # -s systems -m methods -t tier -r replicas -j jobs
+uv run opesval analyze -p LABEL              # redo the analysis of completed runs
+uv run opesval compare A B -t TIER           # write the report (--strict: exit 1 if anything is marked)
 ```
 
-Use `--set NAME` with `run` to keep runs of the same PLUMED apart, e.g. with a different GROMACS
+`uv run` can be omitted after `source .venv/bin/activate`. Use `--set NAME` with `run` to keep runs of the same PLUMED apart, e.g. with a different GROMACS
 (`--gromacs 2025.0 --set v2.9-base_gmx2025`). Optional methods (6D ala4 from the OPES paper) run
 only with `--optional` or when selected with `-m`.
 

@@ -42,10 +42,8 @@ jobs:
       SYSTEMS: ${{ inputs.systems }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
       - name: build PLUMED A
         run: build/build_plumed.sh A "$REF_A" "$REPO"
       - name: build PLUMED B
@@ -53,9 +51,9 @@ jobs:
       - name: build GROMACS
         run: build/build_gromacs.sh "$GROMACS" A
       - name: run
-        run: python -m opesval run -p A B -t "$TIER" ${SYSTEMS:+-s "$SYSTEMS"} --gromacs "$GROMACS"
+        run: uv run opesval run -p A B -t "$TIER" ${SYSTEMS:+-s "$SYSTEMS"} --gromacs "$GROMACS"
       - name: compare
-        run: python -m opesval compare A B -t "$TIER" ${SYSTEMS:+-s "$SYSTEMS"} -o report
+        run: uv run opesval compare A B -t "$TIER" ${SYSTEMS:+-s "$SYSTEMS"} -o report
       - uses: actions/upload-artifact@v4
         if: always()
         with:
