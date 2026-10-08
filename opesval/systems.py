@@ -165,11 +165,13 @@ SYSTEMS = {
                 Method("opes", "plumed-opes.dat", "EXPLORE"),
                 Method("explore", "plumed-explore.dat", "EXPLORE"),
             ),
-            # early: many short runs, for the initial transient (100 replicas from 10 configurations)
+            # early, transient: many short runs, for the initial transient (replicas from 10 configurations;
+            # beyond the 100 committed ones, generate them with build/make_tprs.sh ala2 2024.3 500)
             tiers={
                 "full": Tier(10, 5_000_000),
                 "quick": Tier(10, 5_000_000),
                 "early": Tier(100, 1_000_000),
+                "transient": Tier(500, 250_000),
                 "smoke": Tier(4, 250_000),
             },
             analysis=TwoBasins(

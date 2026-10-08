@@ -75,6 +75,7 @@ only with `--optional` or when selected with `-m`.
 | `smoke` | 4 × 4·10⁵ | 4 × 10⁶ | 4 × 2.5·10⁵ | 4 × 2.5·10⁵ | < 1 min |
 | `quick` | 100 × 4·10⁶ | 25 × 2·10⁷ | 10 × 5·10⁶ | 10 × 10⁷ | ~45 min (estimate) |
 | `early` (ala2 only) | - | - | 100 × 10⁶ | - | ~12 min |
+| `transient` (ala2 only, needs local tprs, see below) | - | - | 500 × 2.5·10⁵ | - | ~10 min (`-m opes,explore`) |
 | `full` (as in the papers) | 100 × 2·10⁷ | 25 × 2·10⁸ | 10 × 5·10⁶ | 10 × 10⁷ | ~4-5 h (estimate) |
 
 Replicas × MD steps, per method; mueller dominates the cost. `early` resolves the initial transient of ala2 with many short runs. `smoke` only checks that everything
@@ -89,6 +90,8 @@ newer version. To regenerate them, e.g. after changing `md.mdp`:
 build/make_tprs.sh ala2 2024.3 100
 build/make_tprs.sh ala4 2024.3
 ```
+
+Only the first 100 ala2 replicas are committed. More can be generated locally, e.g. for the `transient` tier `build/make_tprs.sh ala2 2024.3 500`; `input.100.tpr` and up are git-ignored.
 
 ## Automation
 
