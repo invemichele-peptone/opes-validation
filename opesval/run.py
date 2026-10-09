@@ -52,6 +52,30 @@ def gromacs_install(version):
     return info
 
 
+OPES_ACTION = re.compile(r"^\s*\w+:\s*OPES_METAD(_EXPLORE)?\b")
+
+
+def add_opes_keywords(text, extra):
+    """Append keywords, e.g. "CUTOFF_SCHEME=PR", to the OPES action of a PLUMED input."""
+    if not extra:
+        return text
+    lines = text.splitlines(keepends=True)
+    for n, line in enumerate(lines):
+        if OPES_ACTION.match(line):
+            if line.rstrip().endswith("..."):  # multi-line action
+                lines.insert(n + 1, f"  {extra}\n")
+            else:
+                lines[n] = line.rstrip("\n") + f" {extra}\n"
+            return "".join(lines)
+    raise ValueError("no OPES_METAD or OPES_METAD_EXPLORE action found")
+
+
+def default_run_set(label, opes_extra):
+    if not opes_extra:
+        return label
+    return label + "+" + "+".join(kw.lower().replace("=", "-") for kw in opes_extra.split())
+
+
 @dataclass
 class Job:
     system: object
@@ -61,6 +85,7 @@ class Job:
     run_set: str
     plumed: dict
     gromacs: dict = None
+    opes_extra: str = ""  # keywords added to the OPES action
 
     @property
     def nsteps(self):
@@ -77,10 +102,13 @@ class Job:
     def signature(self):
         """What must match for an existing run to be reused."""
         sig = {"plumed_sha": self.plumed["sha"], "nsteps": self.nsteps}
-        sig["plumed_input"] = (self.system.path / self.method.plumed).read_text()
+        sig["plumed_input"] = self.plumed_input()
         if self.gromacs:
             sig["gromacs"] = self.gromacs["version"]
         return sig
+
+    def plumed_input(self):
+        return add_opes_keywords((self.system.path / self.method.plumed).read_text(), self.opes_extra)
 
     def is_done(self):
         try:
@@ -91,7 +119,7 @@ class Job:
         return info.get("status") == "done" and info.get("signature") == self.signature()
 
 
-def make_jobs(pairs, tier, replicas, labels, run_set=None, gromacs_version=DEFAULT_GROMACS):
+def make_jobs(pairs, tier, replicas, labels, run_set=None, gromacs_version=DEFAULT_GROMACS, opes_extra=""):
     jobs = []
     gromacs = None
     plumeds = {label: plumed_install(label) for label in labels}
@@ -106,8 +134,8 @@ def make_jobs(pairs, tier, replicas, labels, run_set=None, gromacs_version=DEFAU
                 sys.exit(f"replica {replica} not available for {system.name}")
             for label in labels:  # interleave the PLUMED versions
                 jobs.append(
-                    Job(system, method, tier, replica, run_set or label, plumeds[label],
-                        gromacs if system.engine == "gromacs" else None)
+                    Job(system, method, tier, replica, run_set or default_run_set(label, opes_extra), plumeds[label],
+                        gromacs if system.engine == "gromacs" else None, opes_extra)
                 )
     # longest first, for a better load balance
     jobs.sort(key=lambda j: -j.nsteps)
@@ -124,7 +152,7 @@ def prepare(job):
     if job.dir.exists():
         shutil.rmtree(job.dir)
     job.dir.mkdir(parents=True)
-    shutil.copy(job.system.path / job.method.plumed, job.dir / "plumed.dat")
+    (job.dir / "plumed.dat").write_text(job.plumed_input())
     env = dict(os.environ, OMP_NUM_THREADS="1", PLUMED_NUM_THREADS="1")
     if job.system.engine == "ves":
         lines = (job.system.path / "replicas.dat").read_text().splitlines()

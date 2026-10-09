@@ -42,7 +42,8 @@ def cmd_run(args):
     if args.set and len(args.plumed) > 1:
         sys.exit("--set can be used only with a single --plumed")
     pairs = list(systems.select(split(args.systems), split(args.methods), args.optional))
-    jobs = make_jobs(pairs, args.tier, parse_replicas(args.replicas), args.plumed, args.set, args.gromacs)
+    jobs = make_jobs(pairs, args.tier, parse_replicas(args.replicas), args.plumed, args.set, args.gromacs,
+                     args.opes_extra)
     ok = run_jobs(jobs, args.jobs, force=args.force, dry_run=args.dry_run)
     sys.exit(0 if ok else 1)
 
@@ -50,7 +51,8 @@ def cmd_run(args):
 def cmd_analyze(args):
     pairs = list(systems.select(split(args.systems), split(args.methods), args.optional))
     labels = args.plumed
-    jobs = make_jobs(pairs, args.tier, parse_replicas(args.replicas), labels, args.set, args.gromacs)
+    jobs = make_jobs(pairs, args.tier, parse_replicas(args.replicas), labels, args.set, args.gromacs,
+                     args.opes_extra)
     reanalyze(jobs)
 
 
@@ -71,7 +73,9 @@ def main():
 
     p = sub.add_parser("run", help="run simulations (and their analysis)")
     p.add_argument("-p", "--plumed", nargs="+", required=True, help="PLUMED install label(s) in opt/plumed")
-    p.add_argument("--set", help=f"name of the run set in {RUNS} (default: the PLUMED label)")
+    p.add_argument("--set", help=f"name of the run set in {RUNS} (default: the PLUMED label, plus --opes-extra)")
+    p.add_argument("--opes-extra", default="",
+                   help='keywords added to the OPES action, e.g. "CUTOFF_SCHEME=PR MERGE_SCHEME=SPLIT"')
     add_selection(p)
     p.add_argument("-r", "--replicas", help="replicas to run, e.g. 0-4,7 (default: all in the tier)")
     p.add_argument("-j", "--jobs", type=int, default=os.cpu_count(), help="parallel jobs (default: all cores)")
@@ -82,7 +86,8 @@ def main():
 
     p = sub.add_parser("analyze", help="redo the analysis of completed runs")
     p.add_argument("-p", "--plumed", nargs="+", required=True, help="PLUMED install label(s)")
-    p.add_argument("--set", help="name of the run set (default: the PLUMED label)")
+    p.add_argument("--set", help="name of the run set (default: the PLUMED label, plus --opes-extra)")
+    p.add_argument("--opes-extra", default="", help="keywords added to the OPES action")
     add_selection(p)
     p.add_argument("-r", "--replicas")
     p.add_argument("--gromacs", default=DEFAULT_GROMACS)

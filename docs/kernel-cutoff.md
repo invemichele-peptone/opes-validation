@@ -145,7 +145,7 @@ Builds:
 |---|---|---|
 | `v2.9-base` | v2.9 at the PR's merge-base | `d650dbd` |
 | `pr1463` | head of plumed/plumed2#1463 | `db57633` |
-| `alt-fshift` | local branch `opes-force-shifted-kernel` (not published) | `7d11c95` |
+| `alt-fshift` | local branch `opes-force-shifted-kernel` at `7d11c95` (not published) | `7d11c95` |
 
 The alternative branch has two commits on top of `d650dbd`: the PR's merge fix with its
 regtest, and the force-shifted kernel with the PR's finite-difference regtest. GROMACS
@@ -276,7 +276,8 @@ and kernel files unchanged.
 uv sync
 build/build_plumed.sh v2.9-base d650dbd5a52ea8954950f823da5214f54bf837b5
 build/build_plumed.sh pr1463 pr/1463
-build/build_plumed.sh alt-fshift opes-force-shifted-kernel /path/to/plumed2   # local branch
+build/build_plumed.sh alt-fshift 7d11c954e4adac8315479ea2933dd5c5c53a6037 /path/to/plumed2
+# later commits of the branch select the variant with CUTOFF_SCHEME, e.g. --opes-extra CUTOFF_SCHEME=ALTERNATIVE
 build/build_gromacs.sh 2024.3 v2.9-base
 build/make_tprs.sh ala2 2024.3 500                       # replicas 100-499 are not committed
 

@@ -68,7 +68,7 @@ uv run opesval analyze -p LABEL              # redo the analysis of completed ru
 uv run opesval compare A B -t TIER           # write the report (--strict: exit 1 if anything is marked)
 ```
 
-`uv run` can be omitted after `source .venv/bin/activate`. Use `--set NAME` with `run` to keep runs of the same PLUMED apart, e.g. with a different GROMACS
+`uv run` can be omitted after `source .venv/bin/activate`. `--opes-extra "KEY=VALUE ..."` adds keywords to the OPES action of every input (the run set name gets them as a suffix), e.g. to test options of an experimental PLUMED branch. Use `--set NAME` with `run` to keep runs of the same PLUMED apart, e.g. with a different GROMACS
 (`--gromacs 2025.0 --set v2.9-base_gmx2025`). Optional methods (6D ala4 from the OPES paper) run
 only with `--optional` or when selected with `-m`.
 
