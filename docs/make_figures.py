@@ -359,8 +359,102 @@ def figure_transient_split():
     save(fig, "merge-transient-ala2.png")
 
 
+ZED_CASES = [("wolfe-quapp", "opes", 1), ("mueller", "opes", 1), ("mueller", "explore", 1),
+             ("ala2", "opes_jpcl", 2), ("ala2", "opes", 2), ("ala2", "explore", 2),
+             ("ala4", "opes", 3), ("ala4", "explore", 3)]
+
+
+def load_zed(key, system, method, npoints=400):
+    """Time and opes.zed of all quick-tier replicas, on a common subsampled time grid."""
+    from opesval.analysis import read_colvar
+
+    dirs = sorted((ROOT / "runs" / RUN_SET[key] / "quick" / system / method).glob("[0-9][0-9][0-9]"))
+    if not dirs:
+        return None, None
+    cols = [read_colvar(d / "COLVAR")[["time", "opes.zed"]].to_numpy() for d in dirs]
+    n = min(len(c) for c in cols)
+    keep = np.unique(np.linspace(0, n - 1, min(n, npoints)).round().astype(int))
+    return cols[0][keep, 0], np.array([c[keep, 1] for c in cols])
+
+
+def figure_zed():
+    """Evolution of the normalization Z in the quick-tier runs."""
+    fig, axs = plt.subplots(2, 4, figsize=(15, 6.2), facecolor=SURFACE)
+    for ax, (system, method, _) in zip(axs.flat, ZED_CASES):
+        for key in ("old", "PR", "PRsplit"):
+            t, z = load_zed(key, system, method)
+            if t is None:
+                print(f"missing runs for {key} {system}/{method}, skipping")
+                plt.close(fig)
+                return
+            lz = np.log(z)  # Z is skewed across replicas: geometric mean, error from the s.e.m. of log Z
+            m, e = lz.mean(0), lz.std(0, ddof=1) / np.sqrt(len(lz))
+            ax.plot(t, np.exp(m), color=COLOR[key], lw=1.6, label=NAME[key])
+            ax.fill_between(t, np.exp(m - e), np.exp(m + e), color=COLOR[key], alpha=0.18, lw=0)
+        unit = " (ps)" if system.startswith("ala") else ""
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlim(t[1], t[-1])
+        plain = matplotlib.ticker.FuncFormatter(lambda x, _: f"{x:g}")
+        ax.xaxis.set_major_formatter(plain)
+        ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(subs=(1.0, 2.0, 5.0)))
+        ax.yaxis.set_major_formatter(plain)
+        ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_xlabel(f"time{unit}")
+        ax.set_ylabel("Z")
+        ax.set_title(f"{system} / {method}", fontsize=10)
+        style(ax)
+    axs.flat[0].legend(fontsize=8, frameon=False, labelcolor=INK2, loc="lower left")
+    fig.suptitle("Normalization Z along the quick-tier runs (geometric mean ± s.e.m. over replicas)", color=INK,
+                 fontsize=11)
+    save(fig, "merge-zed.png")
+
+
+def figure_zed_ratio():
+    """Z(PR + SPLIT) / Z(PR) compared with the inverse of the mass inflation of the PLAIN merge."""
+    fig, axs = plt.subplots(2, 3, figsize=(12, 6.2), facecolor=SURFACE)
+    for ax, (system, method, ncv) in zip(axs.flat, ZED_CASES[:6]):
+        t, zp = load_zed("PR", system, method)
+        _, zs = load_zed("PRsplit", system, method)
+        if t is None or zs is None:
+            print(f"missing runs for {system}/{method}, skipping")
+            plt.close(fig)
+            return
+        # replica by replica: paired runs share the adaptive sigma0, set before any merge, which fixes
+        # the overall scale of Z (it varies a lot between replicas, much less between PR and PR + SPLIT)
+        n = min(len(zp), len(zs))
+        lr = np.log(zs[:n]) - np.log(zp[:n])
+        d, e = lr.mean(0), lr.std(0, ddof=1) / np.sqrt(n)
+        ratio = np.exp(d)
+        ax.plot(t, ratio, color=COLOR["PRsplit"], lw=2, label="Z(PR + SPLIT) / Z(PR)")
+        ax.fill_between(t, np.exp(d - e), np.exp(d + e), color=COLOR["PRsplit"], alpha=0.2, lw=0)
+        dirs = sorted((ROOT / "runs" / RUN_SET["PR"] / "quick" / system / method).glob("[0-9][0-9][0-9]"))
+        infl = [mass_ratio(d, ncv) for d in dirs]
+        n = min(len(x) for x in infl)
+        ti = infl[0][:n, 0]
+        inv = np.exp(-np.log(np.array([x[:n, 1] for x in infl])).mean(0))
+        ax.plot(ti, inv, color=INK2, lw=1.5, ls="--", label="1 / mass inflation of PR (PLAIN merge)")
+        ax.axhline(1, color=MUTED, lw=0.8, ls=":")
+        ax.annotate(f"{ratio[-1]:.2f}", (t[-1], ratio[-1]), xytext=(4, -10), textcoords="offset points",
+                    color=INK2, fontsize=8)
+        ax.annotate(f"{inv[-1]:.2f}", (ti[-1], inv[-1]), xytext=(4, 4), textcoords="offset points",
+                    color=INK2, fontsize=8)
+        unit = " (ps)" if system.startswith("ala") else ""
+        ax.set_xlim(0, t[-1] * 1.12)
+        ax.set_ylim(0.5, 1.2)
+        ax.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(4))
+        ax.set_xlabel(f"time{unit}")
+        ax.set_ylabel("ratio")
+        ax.set_title(f"{system} / {method}", fontsize=10)
+        style(ax)
+    axs.flat[0].legend(fontsize=8, frameon=False, labelcolor=INK2, loc="lower left")
+    fig.suptitle("Z with SPLIT relative to PLAIN, replica by replica, against the inverse of the mass inflation",
+                 color=INK, fontsize=11)
+    save(fig, "merge-zed-ratio.png")
+
+
 FIGURES = {f.__name__: f for f in (figure1, figure2, figure3, figure_merge_example, figure_mass_inflation,
-                                   figure_ala4, figure_transient_split)}
+                                   figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio)}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or FIGURES:

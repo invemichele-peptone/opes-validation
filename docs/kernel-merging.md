@@ -113,12 +113,45 @@ kernels, along the quick-tier runs.*
 | | Wolfe–Quapp | Müller–Brown OPES | Müller–Brown EXPLORE | ala2 (OPES paper) | ala2 OPES | ala2 EXPLORE |
 |---|---|---|---|---|---|---|
 | mass inflation at the end, PLAIN | 1.28 | 1.28 | 1.37 | 1.20 | 1.27 | 1.30 |
-| Z ratio, PR + SPLIT / PR | 0.78 | 0.77 | 0.72 | 0.82 | 0.76 | 0.76 |
+| Z ratio at the end, PR + SPLIT / PR | 0.78 | 0.77 | 0.72 | 0.82 | 0.77 | 0.76 |
 
 The inflation is not uniform: kernels in long-sampled regions have been merged many
 times, kernels at the edge of the explored region hardly at all. The normalization Z
 shrinks by the inverse of the inflation (0.78 ≈ 1/1.28, 0.72 ≈ 1/1.37, ...). So $P/Z$,
 and the bias, changes only where the inflation differs from its average.
+
+### Normalization Z
+
+$Z$ is the average of the KDE over the kernel centres. It generally decreases as the
+explored region grows and the probability spreads over it.
+
+![Evolution of Z](figures/merge-zed.png)
+
+*Figure 3. Z along the quick-tier runs, geometric mean over replicas. Between replicas,
+the final Z varies by a factor of 1.1–1.9 in the 1D and fixed-σ runs, and by 15–70 with
+adaptive σ in 2–3D (ala2 with the Explore settings, ala4).*
+
+![Z ratio against the inverse mass inflation](figures/merge-zed-ratio.png)
+
+*Figure 4. Z(PR + SPLIT) / Z(PR), compared replica by replica (yellow), and the inverse
+of the mass inflation of the PLAIN merge (dashed, from the STATE and KERNELS files of
+the PR runs).*
+
+- **The ratio follows 1/inflation along the entire run**, in all six systems with STATE
+  output: 0.78 vs 0.78, 0.77 vs 0.78, 0.72 vs 0.73, 0.82 vs 0.83, 0.77 vs 0.79, 0.76 vs
+  0.77 at the end. It is the quantitative basis for the argument that Z absorbs the mass
+  inflation, and that $P/Z$ changes only where the inflation is not uniform.
+- **Why the ratio is taken replica by replica.** Two runs with the same replica index
+  share their adaptive σ0, which is set from the unbiased start before any merge (checked
+  in the STATE files). σ0 sets the overall scale of Z, which therefore differs a lot
+  between replicas but not within a pair: the per-pair ratio is much less noisy than the
+  ratio of averages.
+- **ala4** has no STATE output, so there is no inflation curve.
+  - **OPES_METAD:** Z is the same with both rules (paired ratio 1.01 ± 0.10). With these
+    settings it keeps ~15000 kernels, so few merges happen, and its exploration does not
+    change either.
+  - **OPES_METAD_EXPLORE:** compression is effective (~2300 kernels), Z is 23% lower with
+    SPLIT (paired ratio 0.77), and exploration slows down.
 
 ### Quick tier, all systems
 
@@ -153,7 +186,7 @@ No free-energy metric differs at that level.
 
 ![Exploration of ala4](figures/merge-ala4.png)
 
-*Figure 3. Alanine tetrapeptide biased on the three ψ dihedrals ("bad" CVs, Explore
+*Figure 5. Alanine tetrapeptide biased on the three ψ dihedrals ("bad" CVs, Explore
 paper): number of the 8 φ-states visited over time.*
 
 ### Early transient of ala2
@@ -174,7 +207,7 @@ the PR (31 vs 27 ps, p = 0.06). Its mean ΔF over 200–500 ps does not differ s
 
 ![Early transient of ala2 with PR + SPLIT](figures/merge-transient-ala2.png)
 
-*Figure 4. Left and middle: running ΔF in the first 0.5 ns. Right: first transition to
+*Figure 6. Left and middle: running ΔF in the first 0.5 ns. Right: first transition to
 basin B, OPES_METAD.*
 
 ## 4. Interpretation
