@@ -195,7 +195,13 @@ SYSTEMS = {
                 Method("explore", "plumed-explore.dat", "EXPLORE"),
                 Method("opes_jpcl", "plumed-opes_jpcl.dat", "OPES", optional=True),
             ),
-            tiers={"full": Tier(10, 10_000_000), "quick": Tier(10, 10_000_000), "smoke": Tier(4, 250_000)},
+            # many: more replicas, beyond the 10 committed ones (build/make_tprs.sh ala4 2024.3 50)
+            tiers={
+                "full": Tier(10, 10_000_000),
+                "quick": Tier(10, 10_000_000),
+                "many": Tier(50, 5_000_000),
+                "smoke": Tier(4, 250_000),
+            },
             analysis=Ala4Basins(),
         ),
     ]

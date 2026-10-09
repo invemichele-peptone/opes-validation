@@ -453,8 +453,112 @@ def figure_zed_ratio():
     save(fig, "merge-zed-ratio.png")
 
 
+# ala4 OPES_METAD_EXPLORE variants of the "many" tier: name -> (run set, color, merge rule, NO_ZED)
+MANY = {
+    "PR": ("schemes+cutoff_scheme-pr", COLOR["PR"], "PLAIN", False),
+    "PR + MASS": ("schemes2+cutoff_scheme-pr+merge_scheme-mass", "#e87ba4", "MASS", False),
+    "PR + SPLIT": ("schemes+cutoff_scheme-pr+merge_scheme-split", COLOR["PRsplit"], "SPLIT", False),
+    "PR + SHAPE": ("schemes2+cutoff_scheme-pr+merge_scheme-shape", "#008300", "SHAPE", False),
+    "PR, NO_ZED": ("schemes+cutoff_scheme-pr+no_zed", COLOR["PR"], "PLAIN", True),
+    "PR + MASS, NO_ZED": ("schemes2+cutoff_scheme-pr+merge_scheme-mass+no_zed", "#e87ba4", "MASS", True),
+    "PR + SPLIT, NO_ZED": ("schemes+cutoff_scheme-pr+merge_scheme-split+no_zed", COLOR["PRsplit"], "SPLIT", True),
+    "PR + SHAPE, NO_ZED": ("schemes2+cutoff_scheme-pr+merge_scheme-shape+no_zed", "#008300", "SHAPE", True),
+}
+
+
+def load_many(run_set):
+    dirs = sorted((ROOT / "runs" / run_set / "many/ala4/explore").glob("[0-9][0-9][0-9]"))
+    dirs = [d for d in dirs if (d / "analysis.json").exists()]
+    if len(dirs) < 50:
+        return None
+    vis = [np.load(d / "analysis.npz") for d in dirs]
+    n = min(len(v["time"]) for v in vis)
+    return {"time": vis[0]["time"][:n], "visited": np.array([v["visited"][:n] for v in vis]),
+            "n_trans": np.array([json.load(open(d / "analysis.json"))["n_trans"] for d in dirs])}
+
+
+def own_forces(name, t=5000.0, nrep=15):
+    """Mean bias force at the visited points and number of kernels at time t, replaying the merge rule
+    of a variant on its own trajectories (the first nrep replicas). Cached in reports/."""
+    cache = ROOT / "reports" / "replay-ala4-own.json"
+    data = json.load(open(cache)) if cache.exists() else {}
+    if name in data:
+        return np.array(data[name])
+    from opesval.analysis import read_colvar
+    from opesval.replay import bias, replay
+
+    run_set, _, rule, no_zed = MANY[name]
+    kT, periods, cvs = 0.0083144626181532 * 300, [2 * np.pi] * 3, ["psi1", "psi2", "psi3"]
+    vals = []
+    for run in sorted((ROOT / "runs" / run_set / "many/ala4/explore").glob("[0-9][0-9][0-9]"))[:nrep]:
+        hd = {}
+        for line in open(run / "KERNELS"):
+            if not line.startswith("#!"):
+                break
+            key = line.split()[2] if line.startswith("#! SET") else None
+            if key in ("biasfactor", "epsilon", "kernel_cutoff"):
+                hd[key] = float(line.split()[3])
+        a = (hd["biasfactor"] - 1) * kT
+        dep = np.loadtxt(run / "KERNELS", comments="#", ndmin=2)
+        ndep = np.searchsorted(dep[:, 0], t + 1e-9)
+        col = read_colvar(run / "COLVAR")
+        pts = col[col["time"] <= t][cvs].to_numpy()
+        pts = pts[np.linspace(0, len(pts) - 1, min(800, len(pts))).astype(int)]
+        k = replay(dep, 3, periods, rule, until=t)
+        f = lambda p: bias(p, k, periods, hd["kernel_cutoff"], 1 + ndep, hd["epsilon"], a, no_zed)[0]  # noqa: E731
+        g = np.zeros_like(pts)
+        for i in range(3):
+            dp, dm = pts.copy(), pts.copy()
+            dp[:, i] += 1e-4
+            dm[:, i] -= 1e-4
+            g[:, i] = (f(dp) - f(dm)) / 2e-4
+        vals.append((float(np.mean(np.linalg.norm(g, axis=1)) / kT), len(k[2])))
+    data[name] = vals
+    cache.parent.mkdir(exist_ok=True)
+    json.dump(data, open(cache, "w"))
+    return np.array(vals)
+
+
+def figure_many():
+    """ala4 explore with 50 replicas: exploration of each variant, against bias force and kernel number."""
+    data = {name: load_many(v[0]) for name, v in MANY.items()}
+    data = {k: v for k, v in data.items() if v is not None}
+    fig, axs = plt.subplots(1, 3, figsize=(15, 4.4), facecolor=SURFACE)
+    ax = axs[0]
+    for name, d in data.items():
+        ax.plot(d["time"], d["visited"].mean(0), color=MANY[name][1], lw=1.8, ls="--" if MANY[name][3] else "-",
+                label=name)
+    ax.set_xscale("log")
+    ax.set_xlim(10, d["time"][-1])
+    ax.set_ylim(0.8, 8.2)
+    ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _: f"{x:g}"))
+    ax.set_xlabel("time (ps)")
+    ax.set_ylabel("states visited (of 8), mean of 50")
+    ax.set_title("exploration of the 8 φ states", fontsize=10)
+    style(ax)
+    ax.legend(fontsize=7.5, frameon=False, labelcolor=INK2, loc="upper left")
+    for ax, col, xlabel in ((axs[1], 0, "bias force at visited points (kBT/rad)"),
+                            (axs[2], 1, "compressed kernels")):
+        for name, d in data.items():
+            v = own_forces(name)[:, col]
+            y, ye = d["n_trans"].mean(), d["n_trans"].std(ddof=1) / np.sqrt(len(d["n_trans"]))
+            ax.errorbar(v.mean(), y, xerr=v.std(ddof=1) / np.sqrt(len(v)), yerr=ye, color=MANY[name][1],
+                        marker="s" if MANY[name][3] else "o", ms=7, lw=1.5, capsize=2, ls="none")
+            offset = (6, -13) if name == "PR, NO_ZED" else (6, 5)  # avoid the label of PR + MASS, NO_ZED
+            ax.annotate(name, (v.mean(), y), xytext=offset, textcoords="offset points", color=INK2, fontsize=7.5)
+        ax.set_xlabel(f"{xlabel}, replay of own runs at 5 ns")
+        ax.set_ylabel("transitions in 10 ns, mean of 50")
+        ax.margins(x=0.25)
+        style(ax)
+    axs[1].set_title("transitions vs bias force", fontsize=10)
+    axs[2].set_title("transitions vs number of kernels", fontsize=10)
+    fig.suptitle("ala4, OPES_METAD_EXPLORE with ψ CVs, 50 replicas × 10 ns per variant (dashed / squares: NO_ZED)",
+                 color=INK, fontsize=11)
+    save(fig, "merge-many-ala4.png")
+
+
 FIGURES = {f.__name__: f for f in (figure1, figure2, figure3, figure_merge_example, figure_mass_inflation,
-                                   figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio)}
+                                   figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio, figure_many)}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or FIGURES:

@@ -8,13 +8,20 @@ times the kernel normalization. This note compares the two rules, implemented as
 [plumed/plumed2#1463](https://github.com/plumed/plumed2/pull/1463)
 (see [kernel-cutoff.md](kernel-cutoff.md)).
 
-**Summary.** PLAIN merging inflates the total mass of the KDE: by 20–37% in the runs
-here, more for kernels merged more often. SPLIT conserves it exactly. The
-normalization Z absorbs most of the inflation, so converged free energies do not
-change measurably. OPES_METAD_EXPLORE, however, explores more slowly with SPLIT:
-clearly so for alanine tetrapeptide with three CVs (47.7 vs 59.3 transitions in 20 ns,
-p = 3·10⁻⁴), with a weaker trend elsewhere. In OPES_METAD, SPLIT partly undoes the PR's
-early-time shift.
+**Summary.**
+- PLAIN merging inflates the total mass of the KDE by 20–37% in the runs here, more for
+  kernels merged more often. SPLIT conserves it exactly.
+- The normalization Z absorbs the inflation, and converged free energies do not change
+  measurably.
+- OPES_METAD_EXPLORE explores more slowly with SPLIT. In alanine tetrapeptide with three
+  CVs and 50 replicas, transitions drop by 13% (36.7 vs 42.3 in 10 ns, p = 6·10⁻⁷).
+- Two hybrid merge rules show the cause is not the mass, but weighting the merged
+  centre and variance by mass rather than height:
+  - conserving the mass alone changes nothing;
+  - mass weighting alone cuts transitions by 41%.
+- Mass weighting lets old, wide kernels dominate the new narrow ones. The compressed
+  KDE stays coarser as σ shrinks: fewer kernels, a smoother bias, slower exploration.
+- In OPES_METAD, SPLIT partly undoes the PR's early-time shift.
 
 ## 1. Heights and weights
 
@@ -62,9 +69,17 @@ and gives a narrower result (σ = 0.76 instead of 0.85).*
 ## 2. Implementation
 
 The rule is selected by `MERGE_SCHEME=PLAIN|SPLIT` on the local branch
-`opes-force-shifted-kernel`, commit `740f1fe`, together with
-`CUTOFF_SCHEME=PLAIN|PR|ALTERNATIVE`. Defaults reproduce v2.9. The merge, as in
-`OPESmetad::mergeKernels`:
+`opes-force-shifted-kernel` (commit `740f1fe`, then `a7ac61f`), together with
+`CUTOFF_SCHEME=PLAIN|PR|ALTERNATIVE`. Defaults reproduce v2.9.
+
+Commit `a7ac61f` adds two hybrids, to separate the two changes in SPLIT:
+
+- `MASS`: centre and variance weighted by height, as in PLAIN, but the merged height
+  conserves the mass.
+- `SHAPE`: centre and variance weighted by mass, as in SPLIT, but the heights are summed,
+  as in PLAIN.
+
+The merge for PLAIN and SPLIT, as in `OPESmetad::mergeKernels` at `740f1fe`:
 
 ```c++
 double m1=k1.height;
@@ -95,7 +110,13 @@ Checks:
 - `CUTOFF_SCHEME=PR` reproduces the PR build to within 10⁻¹⁴ on a fixed trajectory.
 - With SPLIT, the total mass $\sum_k h_k\prod_i\sigma_{k,i}$ of the compressed kernels
   equals that of all deposited kernels (ratio 1.000000), checked from the STATE and
-  KERNELS files. There is no regtest for this yet.
+  KERNELS files. MASS also conserves it. SHAPE conserves the sum of heights, and its
+  mass grows 1.7–2.9-fold in short runs. There is no regtest for this yet.
+- `opesval/replay.py` re-compresses the deposited kernels of a KERNELS file with any of
+  the four rules, offline. It reproduces the STATE files written by PLUMED to
+  10⁻¹²–10⁻¹⁶ for all rules, in 1D and periodic 2D. For OPES_METAD_EXPLORE the
+  deposited kernels do not depend on the bias, so the replay compares the rules on
+  exactly the same trajectory.
 
 ## 3. Results
 
@@ -189,6 +210,47 @@ No free-energy metric differs at that level.
 *Figure 5. Alanine tetrapeptide biased on the three ψ dihedrals ("bad" CVs, Explore
 paper): number of the 8 φ-states visited over time.*
 
+With 50 replicas (next section), the difference in visited states turns out smaller
+than these 10 replicas suggest: 7.30 vs 7.52 at 10 ns, p = 0.17. The drop in transitions
+is robust.
+
+### ala4 with 50 replicas: what slows exploration
+
+The test is OPES_METAD_EXPLORE on ala4 with the ψ CVs, 50 replicas × 10 ns per variant
+(`many` tier). It covers PR, PR + SPLIT and the two hybrids, each with and without
+NO_ZED. Each run's own kernels were replayed at 5 ns to get the number of compressed
+kernels and the mean bias force at the visited points (15 replicas). p-values are
+Mann–Whitney or Fisher, against PR in the same group.
+
+| variant | transitions in 10 ns | states visited at 10 ns | all 8 visited | kernels at 10 ns | kernels at 5 ns (replay) | bias force (kBT/rad) |
+|---|---|---|---|---|---|---|
+| PR | 42.3 ± 0.7 | 7.52 ± 0.08 | 27/50 | 1471 | 923 | 6.53 |
+| PR + MASS | 43.9 ± 0.6 (p = 0.18) | 7.52 ± 0.09 | 29/50 | 1542 | 964 | 6.46 |
+| PR + SPLIT | 36.7 ± 0.7 (p = 6·10⁻⁷) | 7.30 ± 0.10 (p = 0.17) | 23/50 | 1376 | 869 | 6.27 |
+| PR + SHAPE | 24.9 ± 1.2 (p = 10⁻¹⁵) | 6.86 ± 0.19 (p = 0.02) | 22/50 | 1080 | 683 | 5.94 |
+| PR, NO_ZED | 32.5 ± 1.5 | 6.86 ± 0.20 | 23/50 | 1572 | 986 | 5.98 |
+| PR + MASS, NO_ZED | 33.1 ± 1.5 (p = 0.8) | 6.64 ± 0.20 (p = 0.39) | 20/50 | 1603 | 996 | 5.77 |
+| PR + SPLIT, NO_ZED | 27.8 ± 1.1 (p = 0.015) | 6.28 ± 0.21 (p = 0.04) | 14/50 | 1447 | 911 | 5.46 |
+| PR + SHAPE, NO_ZED | 22.6 ± 0.8 (p = 6·10⁻⁷) | 7.00 ± 0.18 (p = 0.74) | 24/50 | 1179 | 780 | 5.96 |
+
+![ala4 with 50 replicas](figures/merge-many-ala4.png)
+
+*Figure 6. Left: states visited over time, mean of 50 replicas. Middle and right:
+transitions against the bias force at the visited points and against the number of
+compressed kernels, both from a replay of each variant's own runs at 5 ns. Circles: with
+Z; squares: NO_ZED.*
+
+- **Mass conservation alone does nothing.** PR + MASS behaves like PR, with Z and with
+  NO_ZED.
+- **Mass-weighted merging slows exploration:** PR + SHAPE has 41% fewer transitions than
+  PR.
+- **SPLIT does both** and lands in between.
+- **Removing Z slows every variant** (by 23% for PR, p = 2·10⁻⁷) but leaves the pattern
+  unchanged.
+- **Kernel count predicts exploration best.** Within each group, transitions rise
+  monotonically with the number of compressed kernels. The bias force ranks the variants
+  with Z, but not SHAPE with NO_ZED.
+
 ### Early transient of ala2
 
 These are 400 independent replicas × 0.5 ns per version (replicas 100–499 of the
@@ -207,46 +269,68 @@ the PR (31 vs 27 ps, p = 0.06). Its mean ΔF over 200–500 ps does not differ s
 
 ![Early transient of ala2 with PR + SPLIT](figures/merge-transient-ala2.png)
 
-*Figure 6. Left and middle: running ΔF in the first 0.5 ns. Right: first transition to
+*Figure 7. Left and middle: running ΔF in the first 0.5 ns. Right: first transition to
 basin B, OPES_METAD.*
 
 ## 4. Interpretation
 
-**Why the extra mass speeds up exploration.**
-- PLAIN inflates the kernels in long-sampled regions more than those at the edge of the
-  explored region. After dividing by Z, $P/Z$ is overestimated in the explored regions
-  and underestimated at the edge, by roughly the inflation factor, 1.2–1.4.
-- The bias is $V = a\log(P/Z+\epsilon)$, so the bias contrast between explored and new
-  regions grows by about $a\log 1.3$.
-- For OPES_METAD, $a = (1-1/\gamma)k_BT \approx k_BT$, a small effect (≈ 0.25 kBT).
-- For OPES_METAD_EXPLORE, $a = (\gamma-1)k_BT$. With the ala4 settings, γ = 20, so the
-  contrast grows by about 5 kBT.
-- That extra push out of explored regions helps exploration. SPLIT removes it, which
-  explains why OPES_METAD_EXPLORE slows down while OPES_METAD barely changes.
-- The effect shows most where exploration is slow and the edge of the explored region
-  persists: ala4 with bad CVs, three dimensions, where inflation compounds per dimension.
+**It is not the mass.**
+- The mass inflation of PLAIN is large (Figure 2), but Z absorbs it (Figure 4).
+- PR + MASS, which conserves the mass with the PLAIN shape, explores exactly like PR,
+  even with NO_ZED. Without Z, the replay shows its bias at the visited points sitting
+  ~2 kBT lower than PR's, with no visible effect on exploration.
+- *Correction:* an earlier version of this note attributed the slowdown to the
+  inflation acting through Z, as an extra bias contrast of $a\log 1.3 \approx 5$ kBT.
+  The hybrids rule that out.
 
-**Why there are fewer kernels.** SPLIT also merges wider kernels (Figure 1, right).
-Compression captures new kernels within one σ of an existing kernel, so wider kernels
-absorb more new ones: 2090 vs 2310 compressed kernels in ala4 explore.
+**It is the weighting of the merge.**
+- Kernel heights scale as $1/\prod_i\sigma_i$, so new narrow kernels are tall but carry
+  little mass, while old wide kernels carry most of it (Figure 1, right).
+- With mass weights, the old kernel dominates the merge: the result keeps a large σ and
+  barely moves.
+- With height weights, the new kernel dominates: merged kernels follow the newest,
+  narrowest deposits.
+- Adaptive σ shrinks steadily during a run: in ala4 explore, new kernels are 0.18× as
+  wide after 19 ns as at the start. Mass weighting therefore keeps the compressed KDE at
+  the resolution of the early, broad kernels. The result is fewer kernels (683 for
+  SHAPE, 869 for SPLIT, 923 for PR at 5 ns), a smoother bias, weaker forces at the
+  visited points (5.94, 6.27, 6.53 kBT/rad) and fewer transitions.
+- SHAPE also sums the heights, which gives those broad kernels extra mass on top, so
+  they dominate the KDE even more. SPLIT conserves the mass and sits between PR and
+  SHAPE. Conserving the mass matters only when the merge is mass-weighted.
+
+**Why OPES_METAD_EXPLORE.** Its kernels are wider (with adaptive σ, OPES_METAD divides
+the variance by γ, explore does not) and shrink with the number of kernels, not with
+the effective sample size. So many more merges happen, between kernels of very different
+widths. In ala4, OPES_METAD keeps ~15000 kernels against ~2300 for explore. That is
+exactly where the merge weighting matters, and OPES_METAD is not affected.
 
 **Why free energies don't change.** Within a basin, kernels are compressed to a similar
-degree, so the inflation is nearly uniform there and cancels with Z. Converged ΔF is the
-same within errors. The ala2 OPES-paper case has a smaller error with SPLIT (0.18 vs
-0.32 kJ/mol), but not significantly (p = 0.14).
+degree, so the inflation is nearly uniform there and cancels with Z. The difference in
+resolution affects the bias mostly at the edges of the explored region. Converged ΔF is
+the same within errors. The ala2 OPES-paper case has a smaller error with SPLIT (0.18
+vs 0.32 kJ/mol), but not significantly (p = 0.14).
 
-**In short.** SPLIT is the correct KDE compression: it conserves mass, mean and variance,
-and the free energy estimate is at least as good. Part of OPES_METAD_EXPLORE's
-exploration speed, as published, came from the PLAIN merge's mass inflation, and SPLIT
-gives that up.
+**The static replay is only a guide.** Replaying the PR trajectories with each rule
+gives the right direction, but underestimates SHAPE: about 10% weaker forces than PR,
+against 41% fewer transitions in the actual runs. The dynamics feeds back: a slower
+walker spends longer in its basins, where more merges with broad kernels happen.
+
+**In short.** SPLIT is the consistent compression: it conserves mass, mean and variance,
+and the free energy estimate is at least as good. Its slower exploration in
+OPES_METAD_EXPLORE comes from the mass-weighted merge, which keeps the KDE coarser as σ
+shrinks, not from removing the mass inflation. The MASS hybrid keeps PLAIN's speed and
+conserves the mass, but it does not preserve the mean and variance of the merged pair.
+Whether a smaller COMPRESSION_THRESHOLD would recover the resolution with SPLIT is
+untested.
 
 ## 5. Open points
 
-- The ala4 result rests on 10 replicas (p = 3·10⁻⁴). The plan for confirming it:
-  - 50 replicas × 20 ns of explore with PR and with PR + SPLIT, about 20 min on 20 cores;
-  - the extra ala4 tprs generated locally with `build/make_tprs.sh ala4 2024.3 50`.
-- Not run yet: SPLIT with the v2.9 cutoff (`MERGE_SCHEME=SPLIT` alone) and
-  `CUTOFF_SCHEME=ALTERNATIVE MERGE_SCHEME=SPLIT`.
+- Not run yet: SPLIT with the v2.9 cutoff (`MERGE_SCHEME=SPLIT` alone),
+  `CUTOFF_SCHEME=ALTERNATIVE MERGE_SCHEME=SPLIT`, and SPLIT with a smaller
+  COMPRESSION_THRESHOLD.
+- The 50-replica test covers ala4 with OPES_METAD_EXPLORE only. The other systems rest
+  on the quick tier.
 - A regtest for mass conservation with SPLIT is needed before proposing it upstream.
 - The full tier (paper lengths) would tighten the converged-ΔF comparison.
 
@@ -257,14 +341,21 @@ uv sync
 build/build_plumed.sh v2.9-base d650dbd5a52ea8954950f823da5214f54bf837b5
 build/build_plumed.sh pr1463 pr/1463
 build/build_plumed.sh schemes 740f1fe11dcffcb0b8fc626f3ac30b64356d9af2 /path/to/plumed2
+build/build_plumed.sh schemes2 a7ac61f33bb9d73fceba0f316bc3cb57aac45f59 /path/to/plumed2
 build/build_gromacs.sh 2024.3 v2.9-base
 build/make_tprs.sh ala2 2024.3 500
+build/make_tprs.sh ala4 2024.3 50
 
 uv run opesval run -p v2.9-base pr1463 -t quick
 uv run opesval run -p schemes -t quick --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=SPLIT"
 uv run opesval run -p v2.9-base pr1463 -s ala2 -m opes,explore -t transient
 uv run opesval run -p schemes -s ala2 -m opes,explore -t transient --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=SPLIT"
 uv run opesval compare pr1463 schemes+cutoff_scheme-pr+merge_scheme-split -t quick
+for z in "" " NO_ZED"; do  # ala4, 50 replicas: run set names as read by make_figures.py
+  uv run opesval run -p schemes -s ala4 -m explore -t many --opes-extra "CUTOFF_SCHEME=PR$z"
+  uv run opesval run -p schemes -s ala4 -m explore -t many --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=SPLIT$z"
+  for m in MASS SHAPE; do uv run opesval run -p schemes2 -s ala4 -m explore -t many --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=$m$z"; done
+done
 uv run python docs/make_figures.py   # all figures
 ```
 
