@@ -55,6 +55,10 @@ Completed runs are reused, so `run` can be interrupted and restarted, or extende
   marks metrics with p < 0.01. With ~100 tests, about one is expected to be marked by chance;
   look for consistent patterns, not isolated values.
 
+## Notes
+
+- [docs/kernel-cutoff.md](docs/kernel-cutoff.md): kernel truncation in OPES, PR [#1463](https://github.com/plumed/plumed2/pull/1463) vs a force-shifted alternative, with the tests run here.
+
 ## Commands
 
 ```
