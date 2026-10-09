@@ -10,17 +10,24 @@ times the kernel normalization. This note compares the two rules, implemented as
 
 **Summary.**
 - PLAIN merging inflates the total mass of the KDE by 20–37% in the runs here, more for
-  kernels merged more often. SPLIT conserves it exactly.
-- The normalization Z absorbs the inflation, and converged free energies do not change
-  measurably.
+  kernels merged more often. SPLIT conserves it exactly. The normalization Z absorbs the
+  inflation, and converged free energies do not change measurably.
 - OPES_METAD_EXPLORE explores more slowly with SPLIT. In alanine tetrapeptide with three
   CVs and 50 replicas, transitions drop by 13% (36.7 vs 42.3 in 10 ns, p = 6·10⁻⁷).
-- Two hybrid merge rules show the cause is not the mass, but weighting the merged
-  centre and variance by mass rather than height:
-  - conserving the mass alone changes nothing;
-  - mass weighting alone cuts transitions by 41%.
-- Mass weighting lets old, wide kernels dominate the new narrow ones. The compressed
-  KDE stays coarser as σ shrinks: fewer kernels, a smoother bias, slower exploration.
+- Two hybrid merge rules show the cause is not the mass:
+  - conserving the mass alone (MASS) changes nothing;
+  - weighting the merged centre and variance by mass (SHAPE) cuts transitions by 41%.
+- **Against the uncompressed method** (`COMPRESSION_THRESHOLD=0`), the reference that
+  compression is meant to approximate:
+  - In ala4 explore, PLAIN and MASS reproduce its exploration exactly (42.4 transitions
+    uncompressed, 42.3 PLAIN), and SPLIT does not.
+  - Elsewhere the merge rule matters much less than compressing at all. With adaptive σ,
+    compressed ala2 runs make 35–80% more transitions than uncompressed ones, with any
+    rule. In Müller–Brown explore, compression raises the ΔF error from 4.7 to 7.0–7.7
+    kBT, with any rule.
+- **Recommendation** (section 5): keep PLAIN, or MASS if correct normalization matters,
+  and do not adopt SPLIT. If compression is revisited, the criterion (threshold, capture
+  radius) matters more than the merge rule.
 - In OPES_METAD, SPLIT partly undoes the PR's early-time shift.
 
 ## 1. Heights and weights
@@ -224,6 +231,7 @@ Mann–Whitney or Fisher, against PR in the same group.
 
 | variant | transitions in 10 ns | states visited at 10 ns | all 8 visited | kernels at 10 ns | kernels at 5 ns (replay) | bias force (kBT/rad) |
 |---|---|---|---|---|---|---|
+| uncompressed (`COMPRESSION_THRESHOLD=0`) | 42.4 ± 0.8 | 7.52 ± 0.08 | 29/50 | 9991 | – | – |
 | PR | 42.3 ± 0.7 | 7.52 ± 0.08 | 27/50 | 1471 | 923 | 6.53 |
 | PR + MASS | 43.9 ± 0.6 (p = 0.18) | 7.52 ± 0.09 | 29/50 | 1542 | 964 | 6.46 |
 | PR + SPLIT | 36.7 ± 0.7 (p = 6·10⁻⁷) | 7.30 ± 0.10 (p = 0.17) | 23/50 | 1376 | 869 | 6.27 |
@@ -250,6 +258,58 @@ Z; squares: NO_ZED.*
 - **Kernel count predicts exploration best.** Within each group, transitions rise
   monotonically with the number of compressed kernels. The bias force ranks the variants
   with Z, but not SHAPE with NO_ZED.
+- **The uncompressed run explores exactly like PR** (42.4 vs 42.3 transitions, p = 1)
+  and like PR + MASS (p = 0.18). PR + SPLIT is slower than it (p = 4·10⁻⁷).
+
+### Against the uncompressed method
+
+Compression exists only to keep the number of kernels low, so the uncompressed method,
+which keeps every deposited kernel, is the natural reference. It was run on the quick
+tier with `COMPRESSION_THRESHOLD=0` and the PR cutoff. For Müller–Brown only replicas
+0–9 were run, because without a neighbour list each uncompressed run takes over an hour.
+
+Each rule is compared with the uncompressed runs on the replicas in common. ΔF errors
+are the RMS deviation from the reference in the second half, in kBT for the 2D models and
+kJ/mol for ala2. Run times are per replica. * p < 0.05, ** p < 0.01 vs uncompressed
+(Mann–Whitney).
+
+| system / method (replicas) | transitions: uncompressed / PLAIN / MASS / SPLIT | ΔF error: uncompressed / PLAIN / MASS / SPLIT | run time: uncompressed / compressed |
+|---|---|---|---|
+| Wolfe–Quapp (100) | 4.16 / 4.85* / 4.89* / 4.76* | 1.50 / 1.15 / 1.20 / 1.19 | 99 s / 19 s |
+| Müller–Brown, OPES_METAD (10) | 12.7 / 17.5 / 26.7 / 21.0 | 4.54 / 3.33 / 3.65 / 3.80 | 3770 s / 155 s |
+| Müller–Brown, EXPLORE (10) | 26.5 / 29.1 / 28.3 / 27.6 | **4.69** / 7.46** / 7.05* / 7.65** | 4280 s / 153 s |
+| ala2, OPES paper, fixed σ (10) | 781 / 794 / 794 / 788 | 0.30 / 0.32 / 0.22 / 0.18 | 308 s / 156 s |
+| ala2, OPES_METAD (10) | **284** / 510** / 503** / 474** | 0.80 / 0.86 / 0.47 / 0.64 | 179 s / 66 s |
+| ala2, EXPLORE (10) | **487** / 681** / 694** / 655** | 0.78 / 0.73 / 0.62 / 0.77 | 397 s / 71 s |
+| ala4, OPES_METAD (10) | 29.4 / 27.1 / 26.1 / 29.8 | – | 382 s / 309 s |
+| ala4, EXPLORE (10) | 59.8 / 59.3 / 62.4 / 47.7** | – | 1560 s / 385 s |
+| ala4, EXPLORE, 10 ns (50) | 42.4 / 42.3 / 43.9 / 36.7** | – | 519 s / 174 s |
+
+The compressed run times are those of MASS and SPLIT. PLAIN's Müller–Brown runs took
+twice as long only because they ran while the machine was loaded by unrelated processes.
+
+![Merge rules against the uncompressed method](figures/merge-uncompressed.png)
+
+*Figure 7. Left: transitions of each merge rule relative to the uncompressed runs. Right:
+RMS error of ΔF in the second half, in kBT (ala2 converted from kJ/mol), log scale.*
+
+- **The merge rules differ clearly only in ala4 explore.** There PLAIN and MASS match the
+  uncompressed method and SPLIT is 13–20% slower.
+- **Elsewhere, compressing at all matters more than the rule.**
+  - In ala2 with adaptive σ (Explore-paper inputs), every rule gives 35–80% more
+    transitions than the uncompressed method, with the same ΔF accuracy.
+  - With fixed σ (OPES-paper input) compression makes no difference. So the effect
+    comes from compressing kernels whose width shrinks during the run. We have not
+    analysed it further.
+  - In Wolfe–Quapp, compression gives ~15% more transitions and a slightly smaller ΔF
+    error.
+- **In Müller–Brown explore, compression costs accuracy.** The error is 7.0–7.7 kBT for
+  all rules against 4.7 uncompressed. There, compression keeps only ~23 kernels on a 1D
+  CV. With OPES_METAD the differences are not significant.
+- **MASS is statistically indistinguishable from PLAIN in ΔF error.** Its error is
+  smaller in ala2 (0.47 vs 0.86 kJ/mol with OPES_METAD) and slightly larger in the 2D
+  models, but no difference is significant.
+- **Compression saves a factor of 1.2–28 in run time.**
 
 ### Early transient of ala2
 
@@ -269,7 +329,7 @@ the PR (31 vs 27 ps, p = 0.06). Its mean ΔF over 200–500 ps does not differ s
 
 ![Early transient of ala2 with PR + SPLIT](figures/merge-transient-ala2.png)
 
-*Figure 7. Left and middle: running ΔF in the first 0.5 ns. Right: first transition to
+*Figure 8. Left and middle: running ΔF in the first 0.5 ns. Right: first transition to
 basin B, OPES_METAD.*
 
 ## 4. Interpretation
@@ -316,25 +376,60 @@ gives the right direction, but underestimates SHAPE: about 10% weaker forces tha
 against 41% fewer transitions in the actual runs. The dynamics feeds back: a slower
 walker spends longer in its basins, where more merges with broad kernels happen.
 
-**In short.** SPLIT is the consistent compression: it conserves mass, mean and variance,
-and the free energy estimate is at least as good. Its slower exploration in
-OPES_METAD_EXPLORE comes from the mass-weighted merge, which keeps the KDE coarser as σ
-shrinks, not from removing the mass inflation. The MASS hybrid keeps PLAIN's speed and
-conserves the mass, but it does not preserve the mean and variance of the merged pair.
-Whether a smaller COMPRESSION_THRESHOLD would recover the resolution with SPLIT is
-untested.
+The same replay also suggested that PLAIN's forces are ~16% stronger than those of the
+uncompressed KDE, while SPLIT's match them. Read naively, that meant PLAIN explores
+faster than the method intends, but the uncompressed runs show otherwise (ala4 explore).
+Static measures of the bias, averaged over visited points, are dominated by the basins.
+Exploration depends on the edges of the explored region. Every conclusion here rests on
+the dynamic tests.
 
-## 5. Open points
+**Why SPLIT loses where it does.** SPLIT is the right merge for the global moments of the
+mixture (mass, mean and variance of the pair). The bias, however, depends on
+$\log P$ near the sampled points, i.e. on how high the estimated density is where the
+data lie. When a narrow new kernel merges into a wide old one, SPLIT underestimates the
+peak density: 2.36 against a true 2.85 in Figure 1, right. PLAIN overshoots slightly
+(3.00), because summing heights preserves the density at the centre when the kernels
+overlap.
 
-- Not run yet: SPLIT with the v2.9 cutoff (`MERGE_SCHEME=SPLIT` alone),
-  `CUTOFF_SCHEME=ALTERNATIVE MERGE_SCHEME=SPLIT`, and SPLIT with a smaller
-  COMPRESSION_THRESHOLD.
-- The 50-replica test covers ala4 with OPES_METAD_EXPLORE only. The other systems rest
-  on the quick tier.
-- A regtest for mass conservation with SPLIT is needed before proposing it upstream.
-- The full tier (paper lengths) would tighten the converged-ΔF comparison.
+**In short.** SPLIT is the consistent pairwise merge, but not the one that best
+preserves the dynamics. Where the merge rule matters (ala4 explore), PLAIN and MASS
+reproduce the uncompressed method and SPLIT does not. Elsewhere the merge rule is a
+second-order effect compared with compressing at all.
 
-## 6. Reproducing
+## 5. Recommendation
+
+1. **Keep PLAIN as the default; do not adopt SPLIT.** SPLIT is cleaner mathematically,
+   but where the merge rule matters it departs from the uncompressed method, which PLAIN
+   reproduces. It brings no gain elsewhere.
+2. **MASS is a safe option if correct normalization matters**, e.g. for the meaning of Z,
+   for NO_ZED, or for post-processing that integrates the KDE.
+   - It only changes how the merged height is set.
+   - It was indistinguishable from PLAIN in every dynamic test: quick tier on all systems,
+     and ala4 explore with 50 replicas, with and without Z.
+   - Its ΔF error is statistically the same as PLAIN's.
+   - It is not a moment-matching merge either, and it is not tested beyond these systems.
+3. **If compression is revisited, look at the criterion rather than the merge rule.**
+   - Compressing at all changes the sampling: faster with adaptive σ in ala2, less
+     accurate in Müller–Brown explore.
+   - The threshold, and whether the capture distance is measured in units of the
+     existing or the new kernel's σ, are the knobs.
+   - They should be judged against the uncompressed method, by free energy accuracy per
+     unit of run time.
+
+## 6. Open points
+
+- Why compression speeds up sampling with adaptive σ (ala2), and why it costs accuracy
+  in Müller–Brown explore, has not been analysed.
+- The compression criterion (threshold, capture radius) has only been explored
+  offline, which proved unreliable here. It needs dynamic tests.
+- Not run: SPLIT with the v2.9 cutoff and `CUTOFF_SCHEME=ALTERNATIVE MERGE_SCHEME=SPLIT`.
+  They matter little, given the recommendation.
+- The full tier (paper lengths) would tighten the converged-ΔF comparison. Müller–Brown
+  uncompressed has only 10 replicas.
+- A regtest for mass conservation would be needed before proposing MASS or SPLIT
+  upstream.
+
+## 7. Reproducing
 
 ```bash
 uv sync
@@ -351,6 +446,11 @@ uv run opesval run -p schemes -t quick --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHE
 uv run opesval run -p v2.9-base pr1463 -s ala2 -m opes,explore -t transient
 uv run opesval run -p schemes -s ala2 -m opes,explore -t transient --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=SPLIT"
 uv run opesval compare pr1463 schemes+cutoff_scheme-pr+merge_scheme-split -t quick
+# uncompressed reference and MASS on the quick tier (Mueller-Brown uncompressed: replicas 0-9)
+uv run opesval run -p schemes -t quick -s wolfe-quapp,ala2,ala4 --opes-extra "CUTOFF_SCHEME=PR COMPRESSION_THRESHOLD=0"
+uv run opesval run -p schemes -t quick -s mueller -r 0-9 --opes-extra "CUTOFF_SCHEME=PR COMPRESSION_THRESHOLD=0"
+uv run opesval run -p schemes2 -t quick --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=MASS"
+uv run opesval run -p schemes -s ala4 -m explore -t many --opes-extra "CUTOFF_SCHEME=PR COMPRESSION_THRESHOLD=0"
 for z in "" " NO_ZED"; do  # ala4, 50 replicas: run set names as read by make_figures.py
   uv run opesval run -p schemes -s ala4 -m explore -t many --opes-extra "CUTOFF_SCHEME=PR$z"
   uv run opesval run -p schemes -s ala4 -m explore -t many --opes-extra "CUTOFF_SCHEME=PR MERGE_SCHEME=SPLIT$z"

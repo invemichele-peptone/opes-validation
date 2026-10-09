@@ -25,9 +25,13 @@ def wrap(d, periods):
 
 
 class Compressor:
-    def __init__(self, ncv, periods, threshold=1.0, rule="PLAIN", recursive=True, capacity=1000):
-        assert rule in RULES
+    """capture: distance for merging in units of the sigma of the existing kernel ("old", as in PLUMED)
+    or of the kernel being added ("new")."""
+
+    def __init__(self, ncv, periods, threshold=1.0, rule="PLAIN", recursive=True, capacity=1000, capture="old"):
+        assert rule in RULES and capture in ("old", "new")
         self.ncv, self.periods, self.rule, self.recursive = ncv, np.asarray(periods, float), rule, recursive
+        self.capture = capture
         self.threshold2 = threshold**2
         self.c = np.empty((capacity, ncv))
         self.s = np.empty((capacity, ncv))
@@ -39,11 +43,12 @@ class Compressor:
             a = getattr(self, name)
             setattr(self, name, np.concatenate([a, np.empty_like(a)]))
 
-    def mergeable(self, center, exclude=-1):
-        """Index of the closest kernel within the threshold, in units of its sigma, or -1."""
+    def mergeable(self, center, exclude=-1, sigma=None):
+        """Index of the closest kernel within the threshold, in units of its sigma (or of sigma), or -1."""
         if self.n == 0:
             return -1
-        d = wrap(center - self.c[: self.n], self.periods) / self.s[: self.n]
+        scale = self.s[: self.n] if self.capture == "old" else sigma
+        d = wrap(center - self.c[: self.n], self.periods) / scale
         norm2 = np.sum(d * d, axis=1)
         if exclude >= 0:
             norm2[exclude] = np.inf
@@ -77,7 +82,7 @@ class Compressor:
         self.c[k1], self.s[k1], self.h[k1] = c, s, h
 
     def add(self, center, sigma, height):
-        taker = self.mergeable(center)
+        taker = self.mergeable(center, sigma=sigma)
         if taker < 0:
             if self.n == len(self.h):
                 self._grow()
@@ -88,7 +93,7 @@ class Compressor:
         if not self.recursive:
             return
         giver = taker
-        taker = self.mergeable(self.c[giver], exclude=giver)
+        taker = self.mergeable(self.c[giver], exclude=giver, sigma=self.s[giver])
         while taker >= 0:
             if taker > giver:
                 taker, giver = giver, taker
@@ -97,20 +102,20 @@ class Compressor:
                 a[giver : self.n - 1] = a[giver + 1 : self.n]
             self.n -= 1
             giver = taker
-            taker = self.mergeable(self.c[giver], exclude=giver)
+            taker = self.mergeable(self.c[giver], exclude=giver, sigma=self.s[giver])
 
     @property
     def kernels(self):
         return self.c[: self.n], self.s[: self.n], self.h[: self.n]
 
 
-def replay(deposited, ncv, periods, rule, threshold=1.0, until=None, snapshots=None):
+def replay(deposited, ncv, periods, rule, threshold=1.0, until=None, snapshots=None, capture="old"):
     """Compress the deposited kernels (rows of a KERNELS file) with a merge rule.
 
     Returns the compressed kernels at time `until` (or at the end), or a list of them at the
     times in `snapshots`.
     """
-    comp = Compressor(ncv, periods, threshold, rule)
+    comp = Compressor(ncv, periods, threshold, rule, capture=capture)
     out, snaps = [], list(snapshots or [])
     for row in deposited:
         if until is not None and row[0] > until + 1e-9:

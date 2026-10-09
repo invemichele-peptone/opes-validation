@@ -557,8 +557,89 @@ def figure_many():
     save(fig, "merge-many-ala4.png")
 
 
+UNCOMPRESSED = {  # name -> (run set, color); the reference first
+    "uncompressed": ("schemes+cutoff_scheme-pr+compression_threshold-0", "#4a3aa7"),
+    "PLAIN (PR)": ("pr1463", COLOR["PR"]),
+    "MASS": ("schemes2+cutoff_scheme-pr+merge_scheme-mass", "#e87ba4"),
+    "SPLIT": ("schemes+cutoff_scheme-pr+merge_scheme-split", COLOR["PRsplit"]),
+}
+UNCOMPRESSED_MANY = {"uncompressed": "schemes+cutoff_scheme-pr+compression_threshold-0", "PLAIN (PR)": "schemes+cutoff_scheme-pr",
+                     "MASS": "schemes2+cutoff_scheme-pr+merge_scheme-mass",
+                     "SPLIT": "schemes+cutoff_scheme-pr+merge_scheme-split"}
+
+
+def load_scalars(run_set, tier, system, method):
+    out = {}
+    for d in sorted((ROOT / "runs" / run_set / tier / system / method).glob("[0-9][0-9][0-9]")):
+        try:
+            if json.load(open(d / "run.json"))["status"] == "done":
+                out[int(d.name)] = json.load(open(d / "analysis.json"))
+        except FileNotFoundError:
+            pass
+    return out
+
+
+def figure_uncompressed():
+    """Every merge rule against the uncompressed reference: transitions and free energy error."""
+    cases = [("wolfe-quapp", "opes"), ("mueller", "opes"), ("mueller", "explore"), ("ala2", "opes_jpcl"),
+             ("ala2", "opes"), ("ala2", "explore"), ("ala4", "opes"), ("ala4", "explore")]
+    rows = []  # (label, {name: scalars by replica})
+    for system, method in cases:
+        data = {name: load_scalars(v[0], "quick", system, method) for name, v in UNCOMPRESSED.items()}
+        if not data["uncompressed"]:
+            continue
+        common = set.intersection(*[set(d) for d in data.values()])
+        rows.append((f"{system} / {method} ({len(common)})", {n: [d[i] for i in sorted(common)] for n, d in data.items()},
+                     system))
+    data = {n: list(load_scalars(rs, "many", "ala4", "explore").values()) for n, rs in UNCOMPRESSED_MANY.items()}
+    if all(len(d) == 50 for d in data.values()):
+        rows.append(("ala4 / explore, 10 ns (50)", data, "ala4"))
+    if not rows:
+        print("no uncompressed runs, skipping")
+        return
+    kT = {"ala2": 0.0083144626181532 * 300}
+    fig, axs = plt.subplots(1, 2, figsize=(13, 0.55 * len(rows) + 1.8), facecolor=SURFACE)
+    names = list(UNCOMPRESSED)
+    offsets = dict(zip(names, np.linspace(-0.27, 0.27, len(names))))
+    for y, (label, data, system) in enumerate(rows[::-1]):
+        ref = np.array([r["n_trans"] for r in data["uncompressed"]], float)
+        for name in names[1:]:
+            x = np.array([r["n_trans"] for r in data[name]], float)
+            ratio = x.mean() / ref.mean()
+            err = ratio * np.sqrt((x.std(ddof=1) / np.sqrt(len(x)) / x.mean()) ** 2
+                                  + (ref.std(ddof=1) / np.sqrt(len(ref)) / ref.mean()) ** 2)
+            axs[0].errorbar(ratio, y + offsets[name], xerr=err, color=UNCOMPRESSED[name][1], marker="o", ms=6,
+                            capsize=2, ls="none", label=name if y == 0 else None)
+        if "rmse_deltaF_fes" in data["uncompressed"][0]:
+            for name in names:
+                x = np.array([r["rmse_deltaF_fes"] for r in data[name]], float) / kT.get(system, 1.0)
+                axs[1].errorbar(x.mean(), y + offsets[name], xerr=x.std(ddof=1) / np.sqrt(len(x)),
+                                color=UNCOMPRESSED[name][1], marker="o", ms=6, capsize=2, ls="none",
+                                label=name if y == len(rows) - 1 or (y == 1 and "rmse" not in str(rows)) else None)
+    labels = [r[0] for r in rows[::-1]]
+    for ax in axs:
+        ax.set_yticks(range(len(rows)))
+        ax.set_yticklabels(labels, fontsize=8, color=INK2)
+        ax.set_ylim(-0.6, len(rows) - 0.4)
+        style(ax)
+    axs[0].axvline(1, color=MUTED, lw=1, ls=":")
+    axs[0].set_xlabel("transitions relative to the uncompressed runs")
+    axs[0].set_title("exploration", fontsize=10)
+    axs[0].legend(fontsize=8, frameon=False, labelcolor=INK2, loc="lower right")
+    axs[1].set_xscale("log")
+    axs[1].xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda x, _: f"{x:g}"))
+    axs[1].set_xlabel("RMS error of ΔF in the 2nd half (kBT, log scale)")
+    axs[1].set_title("free energy accuracy (two-basin systems)", fontsize=10)
+    handles = [matplotlib.lines.Line2D([], [], color=UNCOMPRESSED[n][1], marker="o", ls="none") for n in names]
+    axs[1].legend(handles, names, fontsize=8, frameon=False, labelcolor=INK2, loc="lower right")
+    fig.suptitle("Merge rules against the uncompressed method (COMPRESSION_THRESHOLD=0); quick tier, replicas in brackets",
+                 color=INK, fontsize=11)
+    save(fig, "merge-uncompressed.png")
+
+
 FIGURES = {f.__name__: f for f in (figure1, figure2, figure3, figure_merge_example, figure_mass_inflation,
-                                   figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio, figure_many)}
+                                   figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio, figure_many,
+                                   figure_uncompressed)}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or FIGURES:
