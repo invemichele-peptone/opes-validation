@@ -25,9 +25,16 @@ tests a fix implemented as two new options. All runs use the cutoff of
   - none for OPES_METAD_EXPLORE, whose wide kernels put most of them in the list.
 - **The dynamics are unchanged:** no difference on the quick tier (0 of 128 tests at
   p < 0.01).
-- **Recommendation:** make the exact behaviour the only one whenever NLIST is used. The
-  neighbor list could then drop its "experimental" label, and be considered as a default
-  for OPES_METAD.
+- **With 1 or 2 CVs** (section 5), after a faster rebuild of the list (branch commit
+  b880f90):
+  - The list never costs anything measurable (±0.02 µs per step).
+  - With 1 CV, or with OPES_METAD_EXPLORE, it brings nothing.
+  - With 2 CVs and OPES_METAD, it makes OPES 1.5–3.5× faster once there are more than
+    ~500 kernels. That saves up to 29% of the wall time of alanine dipeptide in vacuum.
+- **Recommendation:**
+  - Make the exact behaviour the only one whenever NLIST is used.
+  - Then turn the list on by default, also with 1 or 2 CVs: it never slows OPES down, and
+    it helps OPES_METAD from 2 CVs on.
 
 ## 1. How the neighbor list works (v2.9)
 
@@ -275,7 +282,149 @@ The errors of the v2.9 list are too rare and too small to change the sampling
 statistically. They do make the results depend on whether NLIST is used, as the MD
 comparison shows.
 
-## 5. Recommendation
+## 5. Is the list worth it with 1 or 2 CVs?
+
+Most OPES runs use 1 or 2 CVs. The faster kernel sum of branch commit 4c1f694 makes OPES
+up to 2× faster without a list ([opes-review.md](opes-review.md), section 3), so the
+question is whether the list should still be on by default there. Since the exact list
+gives the same results, this is purely a question of speed.
+
+**Setup** (`build/time_nlist_cases.sh`, `build/summarize_nlist_cases.py`):
+- **Cases:**
+  - Müller–Brown with the ves engine: 1 CV (x) or 2 CVs (x, y).
+  - Wolfe–Quapp, 1 CV.
+  - Alanine dipeptide in vacuum: 1 CV (φ) or 2 CVs (φ, ψ).
+  - Each with the OPES_METAD and OPES_METAD_EXPLORE inputs of the papers. ala2 also with
+    the JPCL 2020 input (`jpcl`: fixed σ = 0.15, BARRIER = 50), which accumulates many
+    kernels.
+  - Alanine tetrapeptide with 3 CVs, as a reference.
+- **Variants:** all with `CUTOFF_SCHEME=PR`:
+  - no list;
+  - `NLIST NLIST_REBUILD=EXACT NLIST_ZED=FULL`, with the default $P_0$ = 3.
+- **Lengths:**
+  - Short runs: 2·10⁷ steps for Müller–Brown, 4·10⁶ for Wolfe–Quapp, 10 ns for the
+    peptides.
+  - Long runs, 10× longer, for the cases that keep adding kernels.
+- **Hardware:** one run per core, pinned to the 10 Cortex-X925 cores, 3 replicas, in
+  random order.
+- **Measured cost:** the time of the OPES action, from `DEBUG DETAILED_TIMERS`. It sums
+  calculate, apply and the update step, which also holds the cheap PRINT.
+
+**The rebuild was the bottleneck.** In a first round with commit 4c1f694, the list
+helped less than expected with thousands of kernels.
+- Rebuilding the list cost about 10 ns per kernel:
+  - each distance went through `Value::difference` and the kernel struct;
+  - by comparison, the two-pass sum costs about 0.7 ns per kernel;
+  - with OPES_METAD the list is rebuilt every 20–100 steps.
+- **Branch commit b880f90** rebuilds the list with the block code of the sum:
+  - it uses a dimension-major copy of all kernels, refreshed only when the kernels change;
+  - the smallest σ is updated with that copy;
+  - the deviation used by the v2.9 rule is computed only for that rule.
+- **Checks:**
+  - Replays are bitwise identical to 4c1f694, for all four actions, including the v2.9
+    list, the list sizes and the rebuild intervals.
+  - Replays with 4 threads, 4 MPI processes, 4 walkers, and 2 walkers × 2 processes ×
+    2 threads match those of 4c1f694 to 10⁻¹¹.
+  - The 45 OPES regtests pass with 1 and 4 threads.
+  - **Speed without a list, concurrent A/B:** both builds run at the same time on the two
+    halves of the cores, then swap halves, 6 runs each.
+    - A first version shared the distance loop with the sum. The shared function was not
+      inlined, and the sum without a list was 4% slower.
+    - The loop is now repeated, and the machine code of the sum is again that of 4c1f694.
+    - With default flags the sum without a list was still 5–10% slower: 6.60 vs
+      6.01 µs per step for ala4 OPES_METAD.
+    - With `-falign-functions=64` both commits run at the same speed, within 0.3%
+      (6.61 vs 6.60 µs). The difference comes from where the linker places the
+      function: the default build of 4c1f694 happened to get a faster placement.
+    - So timings of different builds carry up to ~10% of placement noise, even for
+      identical code. Where possible, the comparisons below are within one build.
+
+**Results.** OPES cost in µs per MD step, mean of 3 replicas:
+- "kernels" is the count at the end of the run;
+- "speed-up" is no list / exact list for the OPES time;
+- the last column is the gain in total wall time;
+- in the short runs, no list and exact list are from the same build and batch;
+- the long runs take the no-list times from 4c1f694;
+- the 1D, explore and long runs used the first version of b880f90. That version's sum
+  was slower, by ~0.004 µs per step over ~150 listed kernels;
+- with placement noise (see the checks above), the speed-ups are uncertain by up to
+  ~10%.
+
+| case | run | kernels | in list | steps between rebuilds | no list | exact list | speed-up | speed-up, old rebuild | wall time saved |
+|---|---|---|---|---|---|---|---|---|---|
+| Müller–Brown 1D, OPES_METAD | short | 84 | 13 | 33 | 0.64 | 0.63 | 1.03 | 1.01 | 0% |
+| Wolfe–Quapp 1D, OPES_METAD | short | 52 | 9 | 103 | 0.60 | 0.59 | 1.01 | 0.99 | 1% |
+| ala2 φ, OPES_METAD | short | 43 | 10 | 69 | 0.63 | 0.62 | 1.01 | 0.96 | 1% |
+| ala2 φ, OPES_METAD | long | 60 | 10 | 33 | 0.63 | 0.63 | 0.99 | 0.98 | 0% |
+| Müller–Brown 1D, EXPLORE | short | 22 | 16 | 3421 | 0.61 | 0.61 | 0.99 | 0.96 | 0% |
+| ala2 φ, EXPLORE | short | 15 | 12 | 5002 | 0.60 | 0.61 | 0.98 | 0.96 | 1% |
+| Müller–Brown 2D, EXPLORE | short | 194 | 94 | 336 | 0.85 | 0.82 | 1.03 | 1.01 | 1% |
+| ala2 φ,ψ, EXPLORE | short | 118 | 82 | 5002 | 0.76 | 0.78 | 0.97 | 0.98 | −1% |
+| ala2 φ,ψ, OPES_METAD | short | 768 | 79 | 67 | 1.34 | 0.90 | 1.49 | 1.33 | 3% |
+| ala2 φ,ψ, OPES_METAD | long | 1587 | 97 | 42 | 2.07 | 1.05 | 1.97 | 1.59 | 8% |
+| Müller–Brown 2D, OPES_METAD | short | 1568 | 137 | 48 | 1.86 | 1.04 | 1.79 | 1.46 | 8% |
+| Müller–Brown 2D, OPES_METAD | long | 3171 | 159 | 31 | 2.96 | 1.25 | 2.37 | 1.69 | 17% |
+| ala2 φ,ψ, jpcl | short | 3262 | 101 | 37 | 3.08 | 1.17 | 2.63 | 1.71 | 13% |
+| ala2 φ,ψ, jpcl | long | 10092 | 149 | 18 | 7.83 | 2.23 | 3.52 | 1.43 | 29% |
+| ala4 3 CVs, EXPLORE | short | 1563 | 850 | 2019 | 3.09 | 3.08 | 1.01 | 0.99 | 0% |
+| ala4 3 CVs, OPES_METAD | short | 8012 | 329 | 101 | 6.66 | 1.71 | 3.89 | 2.78 | 22% |
+
+![Low-dimensional cases](figures/nlist-lowdim.png)
+
+*Figure 4. Left: OPES time per MD step against the mean number of kernels over the run,
+without a list (grey), with the exact list of 4c1f694 (orange) and with the faster rebuild
+of b880f90 (blue). Right: speed-up of OPES with the list. Short and long runs of the same
+case appear as separate points. The no-list times are from 4c1f694, whose placement was
+the lucky one, so the blue speed-ups are lower than in the table (3.5× instead of 3.9× for
+ala4).*
+
+**Observations:**
+- **Fixed cost.** OPES costs about 0.6 µs per step whatever the number of kernels: about
+  0.47 µs in calculate, 0.09 in apply and 0.07 in update. This is the whole cost with up
+  to about 100 kernels.
+- **1 CV, and OPES_METAD_EXPLORE in any dimension:** the list makes no difference.
+  - OPES_METAD with 1 CV keeps only tens of kernels.
+  - OPES_METAD_EXPLORE keeps few kernels, and most of them are in the list.
+  - The changes are within ±0.02 µs per step, at most 3% of the OPES time, and the wall
+    times agree within 1%. The list never costs anything measurable.
+- **2 CVs, OPES_METAD:** the gain grows with the number of kernels.
+  - 1.5× at ~800 kernels, 1.8–2.6× at 1600–3300 kernels, 3.5× at 10⁴ kernels. For
+    comparison, ala4 with 3 CVs and 8000 kernels gets 3.9×.
+  - The longer the run, the more kernels, so the gain also grows with the length of the
+    run.
+  - It saves 0.4–5.6 µs per step. That is 3–29% of the wall time of alanine dipeptide in
+    vacuum, whose MD step costs about 11 µs.
+- **The faster rebuild matters most with many kernels.** For the long jpcl run, the
+  list's speed-up goes from 1.4× to 3.5×.
+- **$P_0$** (exact list, final build, short runs, OPES µs per step):
+
+  | case | P0 = 2 | P0 = 3 (default) | P0 = 5 | P0 = 8 |
+  |---|---|---|---|---|
+  | ala2 φ,ψ, OPES_METAD | 0.91 | 0.90 | 0.94 | 1.37 |
+  | Müller–Brown 2D, OPES_METAD | 1.03 | 1.04 | 1.09 | 1.16 |
+  | ala2 φ,ψ, jpcl | 1.24 | 1.17 | 1.18 | 1.26 |
+  | ala4 3 CVs, OPES_METAD | 1.65 | 1.71 | 2.15 | 4.2 ± 2.1 |
+  | Müller–Brown 2D, EXPLORE | 0.82 | 0.82 | 0.85 | 0.86 |
+  | ala4 3 CVs, EXPLORE | 2.80 | 3.08 | 3.10 | 3.11 |
+
+  - Even with cheap rebuilds, a larger list does not pay off.
+  - $P_0$ = 2 and 3 are equivalent for OPES_METAD. $P_0$ = 2 gains 9% for ala4 EXPLORE.
+  - $P_0$ = 3 remains a good default.
+- **Remaining cost with the list:** about 2.2 µs per step at 10⁴ kernels (long jpcl run).
+  - Calculate takes 1.57 µs: the fixed 0.47, the sum over ~150 listed kernels (~0.1),
+    and about 1 µs for the rebuilds and the copy of the listed kernels after each.
+  - Update takes 0.59 µs, the same as without a list. Most of it is the update of Z at
+    each deposition. It evaluates the new or merged kernel, and the one it replaces,
+    against all kernels, one kernel at a time with `evaluateKernel`.
+    The block code could speed this up too, both with and without the list.
+- **Absolute numbers are small.** The largest saving with 2 CVs, ~5.6 µs per step,
+  matters for small systems.
+  - A GPU run at 500–1000 ns/day with 2 fs steps takes 170–350 µs per step. If PLUMED's
+    time adds to the step, the list changes the speed by less than 1% with a few thousand
+    kernels, and by up to 3% with 10⁴.
+  - The exact list never slows anything down, so it is safe to have it on by default.
+
+## 6. Recommendation
 
 1. **Use the exact behaviour whenever NLIST is on.** Upstream, the simplest change is to
    make `EXACT` and `FULL` the only behaviour, rather than options. The second
@@ -283,18 +432,23 @@ comparison shows.
    - It removes occasional bias and force errors and the Z drift.
    - Results become independent of whether the neighbor list is used.
    - It costs nothing measurable.
-2. **Drop the "experimental" label of NLIST** once the exact version is in. Consider
-   making it the default for OPES_METAD, where it gives up to 2× in 3D, and documenting
-   that it brings little for OPES_METAD_EXPLORE.
-   - With the faster kernel sum of branch commit 4c1f694 ([opes-review.md](opes-review.md),
-     section 3), ala4 OPES_METAD without a list already runs 2× faster. The list then adds
-     1.23× (107 s → 87 s for 10 ns) rather than 2×.
-   - The case for making it the default is weaker, but it still pays off when there are
-     many kernels.
-3. **Keep $P_0$ = 3 as default.** Smaller values (1.5–2) help a little with
-   OPES_METAD_EXPLORE in 3D, and are now safe to use.
+2. **Drop the "experimental" label of NLIST and turn it on by default**, together with
+   the faster rebuild of branch commit b880f90. This holds for 1 and 2 CVs as well
+   (section 5):
+   - Since the list is exact, the choice only affects speed.
+   - It never costs anything measurable: within ±0.02 µs per step with 1 CV and with
+     OPES_METAD_EXPLORE, where it brings nothing.
+   - With 2 CVs and OPES_METAD it makes OPES 1.5–3.5× faster from ~500 kernels on, more
+     in longer runs. With 3 CVs it is 3.9× on ala4.
+   - In absolute terms the gain is a few µs per step at most. That matters for small or
+     fast systems, and is ≤1–3% for a typical solvated GPU run.
+   - Documenting that it brings little for OPES_METAD_EXPLORE is enough. Nothing is
+     needed to turn it off there.
+3. **Keep $P_0$ = 3 as default.** With cheap rebuilds, larger values are slower, and
+   $P_0$ = 2 is about the same (9% better only for ala4 EXPLORE). Smaller values are now
+   safe to use.
 
-## 6. Open points
+## 7. Open points
 
 - **Recursive merges (fixed in branch commit c0b558a).** The EXACT rule guarantees that
   every kernel within the cutoff of the current CV value is in the list. That covers the
@@ -318,7 +472,7 @@ comparison shows.
 - Multiple walkers were tested by replaying saved trajectories (driver `--multi`), not
   with MD. The GROMACS build here has no MPI.
 
-## 7. Reproducing
+## 8. Reproducing
 
 ```bash
 uv sync
@@ -340,4 +494,16 @@ WALKERS=4 NP=2 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-mw4-mpi2
 uv run python build/check_replay.py runs/nlist-replay-mw4                      # vs no list
 uv run python build/check_replay.py runs/nlist-replay-mw4-mpi2 runs/nlist-replay-mw4  # vs serial
 uv run python docs/make_figures.py figure_nlist_scheme figure_nlist_replay figure_nlist_timing
+# 1 to 3 CVs (section 5): fast = branch commit 4c1f694, fastnl = b880f90, on the 10 X925 cores
+build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 /path/to/plumed2
+build/build_plumed.sh fastnl b880f90cf2d59fd1268c8f8c2ad90ea7d09a5013 /path/to/plumed2
+export CORES="5 6 7 8 9 15 16 17 18 19"
+build/time_nlist_cases.sh runs/nlist-lowdim fast
+VARIANTS="none exact" build/time_nlist_cases.sh runs/nlist-3d fast ala4-3d-opes ala4-3d-explore
+VARIANTS="none exact" SCALE=10 build/time_nlist_cases.sh runs/nlist-lowdim-long fast mueller2d-opes ala2-2d-opes ala2-2d-jpcl ala2-1d-opes
+VARIANTS="none exact" build/time_nlist_cases.sh runs/nlist-lowdim-fastnl fastnl   # plus the two ala4 cases
+VARIANTS=exact SCALE=10 build/time_nlist_cases.sh runs/nlist-lowdim-long-fastnl fastnl mueller2d-opes ala2-2d-opes ala2-2d-jpcl ala2-1d-opes
+VARIANTS="none exact exact_p2 exact_p5 exact_p8" build/time_nlist_cases.sh runs/nlist-p0 fastnl mueller2d-opes ala2-2d-opes ala2-2d-jpcl ala4-3d-opes mueller2d-explore ala4-3d-explore
+uv run python build/summarize_nlist_cases.py runs/nlist-p0
+uv run python docs/make_figures.py figure_nlist_lowdim
 ```

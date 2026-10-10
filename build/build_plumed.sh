@@ -8,6 +8,7 @@
 #
 # env: JOBS (default: nproc), OPT_DIR (default: <repo-root>/opt),
 #      MPI: MPI install prefix (e.g. opt/openmpi); enables MPI, using its mpic++
+#      CXXFLAGS (default: -O3)
 
 set -euo pipefail
 
@@ -51,7 +52,7 @@ if [ -n "${MPI:-}" ]; then
 else
   configure_opts+=(--disable-mpi)
 fi
-./configure "${configure_opts[@]}" CXXFLAGS="-O3" > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
+./configure "${configure_opts[@]}" CXXFLAGS="${CXXFLAGS:--O3}" > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
 make -j "$jobs" > make.log 2>&1 || { tail -30 make.log; exit 1; }
 rm -rf "$prefix"
 make install > install.log 2>&1 || { tail -30 install.log; exit 1; }

@@ -42,6 +42,7 @@ that fails without the fix:
 | d439427 | E1–E5, and M2 in OPES_EXPANDED; new regtests `rt-ecv_custom-nop0` (2 MPI processes), `rt-ecv_custom-nop0-restart`, `rt-opes_expanded-mw-work` |
 | c0b558a | exact recursive merges with `NLIST_REBUILD=EXACT` (see [nlist.md](nlist.md)) |
 | 4c1f694 | S1, the two-pass kernel sum (section 3) |
+| b880f90 | faster neighbor list rebuild, with the block code of the sum (see [nlist.md](nlist.md), section 5) |
 
 - E4 is now also reproduced: in a two-walker run, swapping the trajectories should swap
   the walkers' `work`. Before the fix, walker 0 got 16.5 instead of 2.36 on the same
@@ -351,6 +352,14 @@ mean ± s.d. of 3 replicas.
 - **Why MD beats the benchmark estimate:** if the sum got 2.7× faster, the measured 2.0×
   means it took about 78% of the old ala4 OPES_METAD run. The estimate of 60–70% used
   per-kernel costs measured on an A725 core and run times measured on both core types.
+- **Code placement adds up to 10% of noise between builds.** Later concurrent A/B runs
+  ([nlist.md](nlist.md), section 5) showed this for the sum without a list, even with
+  identical machine code: its speed depends on where the linker places the function.
+  - Built with `-falign-functions=64`, 4c1f694 spends 6.60 µs per step in OPES for ala4
+    OPES_METAD without a list, against 6.01 µs for the default build used here, about
+    3 s more over the 107 s run.
+  - So with a less lucky placement the 1.97× would be about 1.9×. The placement of the
+    old build is not known either.
 
 ## 4. Reproducing
 

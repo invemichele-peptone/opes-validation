@@ -799,10 +799,88 @@ def figure_nlist_timing():
     save(fig, "nlist-timing.png")
 
 
+def figure_nlist_lowdim():
+    """Cost of OPES per MD step without a list and with the exact list, vs the number of kernels."""
+    # run set, directory, variant -> series. The exact list was timed with the rebuild of branch commit
+    # 4c1f694 ("old") and with the faster rebuild of b880f90 ("new"); the sum without a list is the same.
+    # A later source replaces the times of an earlier one for the same case and series
+    sources = [("short", "nlist-lowdim", {"none": "none", "exact": "old"}),
+               ("short", "nlist-3d", {"none": "none", "exact": "old"}),
+               ("short", "nlist-lowdim-fastnl", {"exact": "new"}),
+               ("short", "nlist-p0", {"exact": "new"}),
+               ("long", "nlist-lowdim-long", {"none": "none", "exact": "old"}),
+               ("long", "nlist-lowdim-long-fastnl", {"exact": "new"})]
+    points = {}  # (run set, case) -> series -> list of us/step, and "nker"
+    for run_set, dname, series in sources:
+        d = ROOT / "runs" / dname
+        if not (d / "times.dat").exists():
+            continue
+        fresh = set()
+        for line in open(d / "times.dat"):
+            if line.startswith("#"):
+                continue
+            c, variant, rep, nsteps, wall, opes, *_ = line.split()
+            if variant not in series:
+                continue
+            pt = points.setdefault((run_set, c), {"none": [], "old": [], "new": [], "nker": []})
+            if (c, variant) not in fresh:
+                fresh.add((c, variant))
+                pt[series[variant]] = []
+                if variant == "none":
+                    pt["nker"] = []
+            pt[series[variant]].append(float(opes) / int(nsteps) * 1e6)
+            if variant == "none":  # mean number of kernels over the run
+                colvar = d / f"{c}-{variant}-{rep}" / "COLVAR"
+                names = next(l.split()[2:] for l in open(colvar) if l.startswith("#! FIELDS"))
+                pt["nker"].append(np.loadtxt(colvar, comments="#", usecols=names.index("opes.nker")).mean())
+    points = {k: pt for k, pt in points.items() if pt["none"] and pt["old"]}
+    if not points:
+        print("missing runs/nlist-lowdim*/times.dat, skipping")
+        return
+    marker = {"1d": "o", "2d": "s", "3d": "^"}
+    color = {"none": MUTED, "old": "#eb6834", "new": "#2a78d6"}
+    legend = {"none": "no list", "old": "exact list, rebuild of 4c1f694", "new": "exact list, faster rebuild (b880f90)"}
+    fig, axs = plt.subplots(1, 2, figsize=(14, 4.8), facecolor=SURFACE)
+    for (run_set, c), pt in sorted(points.items()):
+        dim = c.split("-")[0][-2:] if c.startswith(("mueller", "wolfe")) else c.split("-")[1]
+        n = np.mean(pt["nker"])
+        explore = "explore" in c
+        cost = {k: np.mean(pt[k]) for k in color if pt[k]}
+        axs[0].plot([n, n], [min(cost.values()), max(cost.values())], color=GRID, lw=1, zorder=1)
+        for k, v in cost.items():
+            axs[0].scatter(n, v, marker=marker[dim], s=44, edgecolor=color[k], facecolor=SURFACE if explore else color[k],
+                           lw=1.5, zorder=2)
+            if k != "none":
+                axs[1].scatter(n, cost["none"] / v, marker=marker[dim], s=44, edgecolor=color[k],
+                               facecolor=SURFACE if explore else color[k], lw=1.5, zorder=2)
+    axs[1].axhline(1, color=INK2, lw=1)
+    for ax in axs:
+        ax.set_xscale("log")
+        ax.set_xlabel("kernels, mean over the run")
+        style(ax)
+    axs[0].set_yscale("log")
+    axs[0].set_yticks([0.5, 1, 2, 5, 10], ["0.5", "1", "2", "5", "10"])
+    axs[0].yaxis.set_minor_formatter(plt.NullFormatter())
+    axs[0].set_ylabel("OPES time per MD step (µs)")
+    axs[0].set_title("cost of OPES", fontsize=10)
+    axs[1].set_ylabel("speed-up of OPES (no list / list)")
+    axs[1].set_title("gain from the exact neighbor list", fontsize=10)
+    for k in color:
+        axs[0].scatter([], [], marker="s", s=44, edgecolor=color[k], facecolor=color[k], label=legend[k])
+    axs[0].legend(fontsize=8, frameon=False, labelcolor=INK2, loc="upper left")
+    for dim, m in marker.items():
+        axs[1].scatter([], [], marker=m, s=44, edgecolor=INK2, facecolor=INK2, label=f"{dim[0]} CV" + ("s" if dim != "1d" else ""))
+    axs[1].scatter([], [], marker="o", s=44, edgecolor=INK2, facecolor=SURFACE, label="open: OPES_METAD_EXPLORE")
+    axs[1].legend(fontsize=8, frameon=False, labelcolor=INK2, loc="upper left")
+    fig.suptitle("OPES with and without the exact neighbor list, two-pass kernel sum, one core per run", color=INK,
+                 fontsize=11)
+    save(fig, "nlist-lowdim.png")
+
+
 FIGURES = {f.__name__: f for f in (figure1, figure2, figure3, figure_merge_example, figure_mass_inflation,
                                    figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio, figure_many,
                                    figure_uncompressed, figure_nlist_scheme, figure_nlist_replay,
-                                   figure_nlist_timing)}
+                                   figure_nlist_timing, figure_nlist_lowdim)}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or FIGURES:
