@@ -1,12 +1,13 @@
 #!/bin/bash
-# Build and install PLUMED (opes+ves modules, no MPI) from a given git ref.
+# Build and install PLUMED (opes+ves modules) from a given git ref, without MPI unless MPI is set.
 #
 # usage: build/build_plumed.sh <label> <ref> [repo]
 #   label  name of the install, e.g. "v2.9-base" -> opt/plumed/<label>
 #   ref    branch, tag, commit SHA, or "pr/<N>" for a GitHub pull request head
 #   repo   git URL or local path (default: https://github.com/plumed/plumed2.git)
 #
-# env: JOBS (default: nproc), OPT_DIR (default: <repo-root>/opt)
+# env: JOBS (default: nproc), OPT_DIR (default: <repo-root>/opt),
+#      MPI: MPI install prefix (e.g. opt/openmpi); enables MPI, using its mpic++
 
 set -euo pipefail
 
@@ -23,6 +24,7 @@ opt=${OPT_DIR:-$root/opt}
 jobs=${JOBS:-$(nproc)}
 src=$opt/src/plumed-$label
 prefix=$opt/plumed/$label
+[ -n "${MPI:-}" ] && MPI=$(cd "$MPI" && pwd)  # before cd-ing into the sources
 
 case $ref in
   pr/*) fetch_ref="pull/${ref#pr/}/head" ;;
@@ -42,7 +44,13 @@ git checkout -q FETCH_HEAD
 sha=$(git rev-parse HEAD)
 echo "### commit $sha"
 
-configure_opts=(--prefix="$prefix" --enable-modules=+opes+ves --disable-mpi --disable-python --disable-doc)
+configure_opts=(--prefix="$prefix" --enable-modules=+opes+ves --disable-python --disable-doc)
+if [ -n "${MPI:-}" ]; then
+  export PATH=$MPI/bin:$PATH CXX=$MPI/bin/mpic++ CC=$MPI/bin/mpicc
+  configure_opts+=(--enable-mpi CXX="$CXX" CC="$CC")
+else
+  configure_opts+=(--disable-mpi)
+fi
 ./configure "${configure_opts[@]}" CXXFLAGS="-O3" > configure.log 2>&1 || { tail -30 configure.log; exit 1; }
 make -j "$jobs" > make.log 2>&1 || { tail -30 make.log; exit 1; }
 rm -rf "$prefix"

@@ -17,7 +17,8 @@ tests a fix implemented as two new options. All runs use the cutoff of
 - **The fix:** `NLIST_REBUILD=EXACT` rebuilds the list before any kernel outside it can
   come within the cutoff, and `NLIST_ZED=FULL` updates Z with all kernels.
 - **With both, the neighbor list is exact:** in MD, all 12 runs of 10 ns are bitwise
-  identical to the runs without a neighbor list.
+  identical to the runs without a neighbor list. Replays with OpenMP threads, MPI
+  processes and multiple walkers (`WALKERS_MPI`) also agree with no list, to round-off.
 - **The cost is unmeasurable.** The speed-up is the same as with the v2.9 list:
   - 2× for OPES_METAD on ala4 (3 CVs);
   - 12–18% on ala2 (2 CVs);
@@ -126,7 +127,10 @@ and forces to agree to 10⁻⁹ at every step, for OPES_METAD and OPES_METAD_EXP
 - It uses adaptive σ, so that kernels have different widths and most of them lie outside
   the list.
 - As negative controls, it fails with `NLIST_ZED=PLAIN` and with `NLIST_REBUILD=PLAIN`.
-- All 41 OPES regtests pass.
+- All 42 OPES regtests pass (the 41 existing ones and the new one):
+  - with `PLUMED_NUM_THREADS` = 4 and 8;
+  - with a PLUMED built with MPI, where 15 of them run on 2 MPI processes, 7 of these with
+    2 walkers (`WALKERS_MPI`, one of them with NLIST).
 
 ## 4. Tests
 
@@ -157,6 +161,57 @@ scale. Middle and right: relative Z error over time, median of 3 replicas.*
   Z drift, which FULL removes.
 - The result is bitwise identical to the run without a neighbor list: summing over the
   listed kernels skips only kernels that contribute exactly zero.
+
+### Parallel runs: OpenMP, MPI and multiple walkers
+
+The same replay was repeated with a PLUMED built with MPI (OpenMPI 4.1.6), in several
+parallel layouts (`THREADS`, `NP` and `WALKERS` in `build/replay_nlist.sh`):
+- **Within a replica:** 4 OpenMP threads; 4 MPI processes; 2 MPI processes × 2 threads.
+  These exercise the OpenMP and MPI branches of the list build and the MPI minimum of
+  $\sigma_{\rm min}$.
+- **Multiple walkers:** 4 walkers sharing the bias with `WALKERS_MPI`, using replicas 0–3
+  as the walkers' trajectories. Also 2 walkers × 2 MPI processes × 2 threads, and
+  4 walkers × 2 MPI processes. These exercise the union of the walkers' lists at each
+  deposition.
+
+| largest error vs no list, all systems and walkers | v2.9 list: bias | v2.9 list: Z | EXACT + FULL Z: bias | EXACT + FULL Z: Z |
+|---|---|---|---|---|
+| 4 threads | 0.30 kBT | 5·10⁻⁴ | 8·10⁻¹³ kBT | 9·10⁻¹⁴ |
+| 4 MPI processes | 0.30 kBT | 5·10⁻⁴ | 6·10⁻¹³ kBT | 8·10⁻¹⁴ |
+| 2 MPI processes × 2 threads | 0.30 kBT | 5·10⁻⁴ | 8·10⁻¹³ kBT | 8·10⁻¹⁴ |
+| 4 walkers | 1.2·10⁻³ kBT | 2·10⁻⁵ | **0** | **0** |
+| 2 walkers × 2 MPI × 2 threads | 1.7·10⁻³ kBT | 5·10⁻⁴ | 5·10⁻¹³ kBT | 10⁻¹³ |
+| 4 walkers × 2 MPI processes | 1.2·10⁻³ kBT | 2·10⁻⁵ | 4·10⁻¹³ kBT | 10⁻¹³ |
+
+- **The exact list stays exact in every layout.** With threads or MPI processes, the
+  list and the full sum add the same terms in a different order, so they agree to
+  round-off rather than bitwise. The bias is printed with 14 digits, so 4·10⁻¹³ kBT is
+  the print resolution.
+- Every action agrees with the serial replay to 10⁻¹¹ kBT, with one exception: the v2.9
+  list. In ala2 OPES_METAD with 4 walkers × 2 MPI processes it differs from the serial
+  walkers by 3·10⁻⁷ kBT. Its rebuild test uses a sum whose order depends on the MPI
+  layout, so it rebuilds at different steps. The errors of the v2.9 list therefore also
+  depend on how the run is parallelised.
+- With walkers the v2.9 list misses less (1·10⁻³ kBT rather than 0.3 in ala4), because
+  each walker's list is the union of all the walkers' lists after every deposition.
+
+**Union of the lists.** The union is what keeps the walkers' merges consistent, but it
+also makes each walker's list larger until its next rebuild:
+
+| share of the kernels in the list after a deposition (EXACT + FULL, second half of the replay) | ala2 OPES_METAD | ala2 EXPLORE | ala4 OPES_METAD | ala4 EXPLORE |
+|---|---|---|---|---|
+| 1 walker | 14% | 92% | 4% | 80% |
+| 4 walkers | 32% | 100% | 7% | 93% |
+
+- In MD this matters only when the list is rebuilt less often than every PACE steps.
+  - With OPES_METAD the list is rebuilt every 67–100 steps (Speed section), so the union
+    lasts for a small part of each PACE = 500 interval.
+  - With OPES_METAD_EXPLORE the list lasts about 2000–5000 steps, so the union persists.
+    But there the list already holds most kernels.
+- Keeping each walker's own list would need extra bookkeeping. Kernels changed by other
+  walkers would have to be added only if they are within the list radius, and
+  $\sigma_{\rm min}$ updated for those left out. It is probably not worth it for typical
+  numbers of walkers; not tested.
 
 ### Exactness in MD
 
@@ -236,14 +291,27 @@ comparison shows.
 
 ## 6. Open points
 
-- Only the serial code paths were tested.
-  - Not tested: the OpenMP branch of the list build (with more than one thread), the
-    MPI reduction of $\sigma_{\rm min}$ (`NumParallel_` > 1) and multiple walkers
-    (`WALKERS_MPI`, `NLIST_PACE_RESET`).
-  - With multiple walkers the list becomes the union of the walkers' lists, so the
-    guarantee should hold, but the regtest does not cover it.
+- **Recursive merges search only the list.** The EXACT rule guarantees that every kernel
+  within the cutoff of the current CV value is in the list. That covers the bias, the
+  forces and the first merge of a new kernel, since the merge threshold is smaller than
+  the cutoff.
+  - After a merge, the merged kernel is merged again with its nearest neighbour if one is
+    within the threshold (`RECURSIVE_MERGE_OFF` disables this). That neighbour must lie
+    within the threshold of the merged centre, which can be up to
+    COMPRESSION_THRESHOLD·σ (of the old kernel) away from the current CV value.
+  - So a neighbour outside the list can be missed only if two nearby kernels differ in
+    width by more than about KERNEL_CUTOFF/COMPRESSION_THRESHOLD − 1, i.e. 4–5× with
+    default settings.
+  - This never happened in any test here: all MD and replay comparisons are bitwise
+    identical or at round-off.
+  - A strict fix would search all kernels in the recursive steps, at the cost of one
+    O(N) distance loop per recursive merge, similar to the FULL Z update.
+- `NLIST_PACE_RESET` was only covered by the existing regtest `rt-opes_metad-mw-bis`
+  (v2.9 rule).
 - The speed tests cover ala2 and ala4 in vacuum, where PLUMED is a large part of the
   cost. In larger systems the relative gain of the neighbor list will be smaller.
+- Multiple walkers were tested by replaying saved trajectories (driver `--multi`), not
+  with MD. The GROMACS build here has no MPI.
 
 ## 7. Reproducing
 
@@ -256,6 +324,15 @@ uv run opesval run -p pr1463 -t quick                 # if not run already
 uv run opesval run -p nlist -t quick --opes-extra "CUTOFF_SCHEME=PR NLIST_REBUILD=EXACT NLIST_ZED=FULL"
 uv run opesval compare pr1463 nlist+cutoff_scheme-pr+nlist_rebuild-exact+nlist_zed-full -t quick
 build/replay_nlist.sh nlist pr1463          # needs the quick-tier trajectories of pr1463
+uv run python build/check_replay.py runs/nlist-replay
 build/time_nlist.sh nlist runs/nlist-timing  # on an otherwise idle machine
+# parallel runs: build OpenMPI 4.1.6 into opt/openmpi first, then
+MPI=opt/openmpi build/build_plumed.sh nlist-mpi 160bdfcf3a345ca03eb585ac84a6a2f416db1285 /path/to/plumed2
+THREADS=4 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-omp4
+NP=4 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-mpi4
+WALKERS=4 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-mw4
+WALKERS=4 NP=2 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-mw4-mpi2
+uv run python build/check_replay.py runs/nlist-replay-mw4                      # vs no list
+uv run python build/check_replay.py runs/nlist-replay-mw4-mpi2 runs/nlist-replay-mw4  # vs serial
 uv run python docs/make_figures.py figure_nlist_scheme figure_nlist_replay figure_nlist_timing
 ```
