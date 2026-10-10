@@ -22,16 +22,35 @@ How it was done:
 | E1 | ECV_CUSTOM, 2 or more ARGs, no `ADD_P0` | wrong index for the ARGs not in the ensemble | every ensemble but the first gets β·ARG0 added: wrong ΔF, bias and forces | reproduced |
 | E2 | OPES_EXPANDED, observation phase, more than one MPI process per replica | STATE written before initialisation | crash in MPI_Allgatherv | reproduced |
 | E3 | ECV_CUSTOM restart, `_` in ARG labels | the code splits labels on `_` | restart from STATE or DELTAFS aborts | reproduced |
-| E4 | OPES_EXPANDED, `CALC_WORK` with `WALKERS_MPI` | ECVs are left at the last walker's CVs | wrong `work` on every walker but the last; bias and forces are fine | inspection |
+| E4 | OPES_EXPANDED, `CALC_WORK` with `WALKERS_MPI` | ECVs are left at the last walker's CVs | wrong `work` on every walker but the last; bias and forces are fine | reproduced (after the first version of this note) |
 | E5 | ECV_MULTITHERMAL_MULTIBARIC, `CUT_CORNER` | `temp_high-pres_low` instead of `pres_high-pres_low` | the cut line is shifted; with non-default units it can exclude no points at all | inspection |
 | E6 | ECV_UMBRELLAS_LINE/FILE with several CVs | `BARRIER` caps each CV separately | the initial bias can reach (number of CVs)×BARRIER | inspection, intent unclear |
 | M3 | OPES_METAD, `getMergeableKernel` with NLIST | early exit reads the shared minimum instead of the thread's own | data race under OpenMP; result unaffected, weaker early exit | inspection |
 | M4 | OPES_METAD, Z update | `ks*ks` overflows `unsigned` from 65,536 kernels | at some kernel counts Z is recomputed with N² evaluations (tens of seconds); result unaffected | reproduced (arithmetic) |
 | M5 | OPES_METAD, adaptive σ | `update()` returns before the STATE write during the first ADAPTIVE_SIGMA_STRIDE steps | no STATE if a checkpoint falls in that window | inspection |
-| S1 | OPES_METAD kernel sum | per-kernel early exit and data layout | a two-pass version is 2.7–3.7× faster on the kernel sum (ala4), with the same results to 4·10⁻¹⁶; about 1.7–1.8× on the whole run (estimate) | micro-benchmark |
+| S1 | OPES_METAD kernel sum | per-kernel early exit and data layout | a two-pass version is 2.7–3.7× faster on the kernel sum (ala4), with the same results to 4·10⁻¹⁶; in MD, ala4 runs 2.0× faster (OPES_METAD) and 1.4× faster (EXPLORE) | micro-benchmark, MD |
 
 M2 and E1–E6 come from the review of OPES_EXPANDED and the ECVs; M2 was then found and
 measured in OPES_METAD as well. Line numbers refer to master c3506e974.
+
+**Status: fixed on the plumed2 branch `opes-force-shifted-kernel`**, each with a regtest
+that fails without the fix:
+
+| commit | what |
+|---|---|
+| f4c856b | M1–M4 in OPES_METAD; new regtest `rt-opes_metad-kernels-restart` |
+| d439427 | E1–E5, and M2 in OPES_EXPANDED; new regtests `rt-ecv_custom-nop0` (2 MPI processes), `rt-ecv_custom-nop0-restart`, `rt-opes_expanded-mw-work` |
+| c0b558a | exact recursive merges with `NLIST_REBUILD=EXACT` (see [nlist.md](nlist.md)) |
+| 4c1f694 | S1, the two-pass kernel sum (section 3) |
+
+- E4 is now also reproduced: in a two-walker run, swapping the trajectories should swap
+  the walkers' `work`. Before the fix, walker 0 got 16.5 instead of 2.36 on the same
+  trajectory; after it, the values swap exactly.
+- The E5 fix changes the references of the four regtests that use CUT_CORNER. The new
+  outputs keep exactly the grid points on or above the cut line, recomputed
+  independently; the old ones kept 1–6 points below it.
+- Not changed: E6, whose intent is the author's call, and M5, which would need STATE
+  files without kernels.
 
 ## 1. OPES_METAD and OPES_METAD_EXPLORE
 
@@ -273,21 +292,65 @@ built here):
   `Tools::pbc`.
   - Making the distance loop vectorise as well (by rounding with a magic constant) gave
     no further gain.
-- **Expected effect on MD (estimate, not measured):** about 1.7–1.8× for ala4 without a
-  list.
-  - The no-list runs hold on average 4,100 (OPES_METAD) and 910 (EXPLORE) kernels.
-  - At the benchmark's per-kernel cost, 5·10⁶ steps of kernel sums take about 180 s and
-    95 s. That is roughly 60–70% of the 265 s and 162 s runs.
-  - The benchmark ran on a Cortex-A725 core, the slower of the machine's two core types;
-    the MD runs used both types.
-  - For OPES_METAD_EXPLORE, where the neighbor list does not help, this is the only
-    speed-up found.
-  - With the exact neighbor list, the summed kernels are already few, and the gain would
-    be smaller.
-- The change is a refactor of the kernel storage: merging, erasing, the neighbor list and
-  the STATE output all touch it. The cheap changes (1/σ, no early exit) give 1.1–1.7×.
-- With the neighbor list, the same two-pass loop applies to the listed kernels, through
-  an index.
+- The micro-benchmark had predicted about 1.7–1.8× for ala4 without a list. That estimate
+  assumed the kernel sum took 60–70% of those runs.
+- The cheap changes (1/σ, no early exit) give 1.1–1.7× in the benchmark.
+
+### Implementation and measured speed-up
+
+Branch commit 4c1f694 implements the two-pass sum in OPES_METAD:
+- **Storage:** the kernels that are summed (all of them, or those in the neighbor list)
+  are also kept in arrays with one CV per contiguous array, together with 1/σ.
+  - These arrays are rebuilt whenever the kernels or the list change, i.e. at most once
+    per deposition or list rebuild. That costs O(N·d), against O(N) per MD step for the
+    sum itself.
+- **Periodic wrap:** a branch-free rounding, `nearbyint` where it is a single
+  instruction (aarch64, and x86 with SSE4.1), otherwise a conversion to `int`. On this
+  machine `Tools::pbc` cancels most of the gain: the two-pass sum is then only 1.1–2.0×
+  faster.
+  - The x86 fallback was not measured. In the benchmark on aarch64 it gives 1.9–2.9×.
+- **Order of the sum:** unchanged, so a serial run sums the same terms in the same
+  order.
+- **Parallel split:** MPI processes take contiguous shares of the kernels, and OpenMP
+  threads blocks of 64. Threads are used above 2 × threads × 64 kernels.
+
+Checks:
+- All 45 OPES regtests pass, with 1 and with 4 OpenMP threads.
+- **Replays:** in the replays of [nlist.md](nlist.md), the new build agrees with the
+  previous one to round-off. The largest differences are 1.2·10⁻¹² kBT in the bias and
+  8·10⁻¹² in the forces. This holds serially, with 4 threads, with 4 MPI processes and
+  with walkers.
+- **Exact list:** with `NLIST_REBUILD=EXACT NLIST_ZED=FULL`, the replays stay bitwise
+  identical to no list in serial runs, and at round-off in parallel ones.
+- **MD:** all 12 runs of 10 ns with the exact list have COLVAR files identical to those
+  without a list.
+
+**MD timing** (`build/time_builds.sh`): 10 ns, one job per core, pinned to the 10
+Cortex-X925 cores. The jobs of the old and new builds are shuffled together. Times are
+mean ± s.d. of 3 replicas.
+
+| wall time | old (160bdfc) | new (4c1f694) | speed-up |
+|---|---|---|---|
+| ala2 OPES_METAD, no list | 68.0 ± 1.9 s | 57.5 ± 0.5 s | 1.18× |
+| ala2 OPES_METAD, exact list | 59.7 ± 2.0 s | 56.2 ± 0.6 s | 1.06× |
+| ala2 EXPLORE, no list | 57.0 ± 0.9 s | 54.9 ± 1.2 s | 1.04× |
+| ala2 EXPLORE, exact list | 57.0 ± 0.1 s | 54.4 ± 0.5 s | 1.05× |
+| ala4 OPES_METAD, no list | 211.0 ± 4.8 s | 107.0 ± 1.5 s | **1.97×** |
+| ala4 OPES_METAD, exact list | 103.8 ± 2.3 s | 87.1 ± 0.6 s | 1.19× |
+| ala4 EXPLORE, no list | 130.2 ± 2.7 s | 91.5 ± 1.0 s | **1.42×** |
+| ala4 EXPLORE, exact list | 130.2 ± 4.4 s | 91.4 ± 2.0 s | **1.42×** |
+
+- **ala4, OPES_METAD without a list:** the run is now 2× faster, matching what the exact
+  neighbor list alone gave.
+- **ala4, OPES_METAD_EXPLORE:** 1.4× faster, where the neighbor list never helped.
+- **ala2:** small gains, because it has few kernels (100–700) and the MD itself dominates.
+- **With the exact list (ala4 OPES_METAD):** the new build adds 1.19×. The list now gives
+  1.23× over the no-list run, down from 2×.
+  - The "exact" variant of the new build also includes the exhaustive recursive merge
+    search of c0b558a, one O(N) distance loop per deposition.
+- **Why MD beats the benchmark estimate:** if the sum got 2.7× faster, the measured 2.0×
+  means it took about 78% of the old ala4 OPES_METAD run. The estimate of 60–70% used
+  per-kernel costs measured on an A725 core and run times measured on both core types.
 
 ## 4. Reproducing
 
@@ -295,8 +358,12 @@ PLUMED builds: `pr1463` and `nlist` as in [nlist.md](nlist.md); `nlist-mpi` with
 `MPI=opt/openmpi build/build_plumed.sh nlist-mpi <sha> /path/to/plumed2`.
 
 ```bash
-# S1, kernel-sum micro-benchmark
+# S1, kernel-sum micro-benchmark, and MD timing of the old and new builds
 bench/kernel_sum.sh nlist pr1463
+build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 /path/to/plumed2
+CORES="5 6 7 8 9 15 16 17 18 19" build/time_builds.sh runs/kernel-sum-timing nlist fast
+build/replay_nlist.sh fast pr1463 runs/nlist-replay-fast
+uv run python build/check_replay.py runs/nlist-replay-fast runs/nlist-replay   # new vs old build
 
 # M1, KERNELS restart: restart from the KERNELS file of an adaptive-sigma explore run, read sigma0
 cat > plumed.dat << 'EOF'

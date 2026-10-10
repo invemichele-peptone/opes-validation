@@ -286,26 +286,31 @@ comparison shows.
 2. **Drop the "experimental" label of NLIST** once the exact version is in. Consider
    making it the default for OPES_METAD, where it gives up to 2× in 3D, and documenting
    that it brings little for OPES_METAD_EXPLORE.
+   - With the faster kernel sum of branch commit 4c1f694 ([opes-review.md](opes-review.md),
+     section 3), ala4 OPES_METAD without a list already runs 2× faster. The list then adds
+     1.23× (107 s → 87 s for 10 ns) rather than 2×.
+   - The case for making it the default is weaker, but it still pays off when there are
+     many kernels.
 3. **Keep $P_0$ = 3 as default.** Smaller values (1.5–2) help a little with
    OPES_METAD_EXPLORE in 3D, and are now safe to use.
 
 ## 6. Open points
 
-- **Recursive merges search only the list.** The EXACT rule guarantees that every kernel
-  within the cutoff of the current CV value is in the list. That covers the bias, the
-  forces and the first merge of a new kernel, since the merge threshold is smaller than
-  the cutoff.
+- **Recursive merges (fixed in branch commit c0b558a).** The EXACT rule guarantees that
+  every kernel within the cutoff of the current CV value is in the list. That covers the
+  bias, the forces and the first merge of a new kernel, since the merge threshold is
+  smaller than the cutoff.
   - After a merge, the merged kernel is merged again with its nearest neighbour if one is
     within the threshold (`RECURSIVE_MERGE_OFF` disables this). That neighbour must lie
     within the threshold of the merged centre, which can be up to
     COMPRESSION_THRESHOLD·σ (of the old kernel) away from the current CV value.
-  - So a neighbour outside the list can be missed only if two nearby kernels differ in
-    width by more than about KERNEL_CUTOFF/COMPRESSION_THRESHOLD − 1, i.e. 4–5× with
-    default settings.
-  - This never happened in any test here: all MD and replay comparisons are bitwise
-    identical or at round-off.
-  - A strict fix would search all kernels in the recursive steps, at the cost of one
-    O(N) distance loop per recursive merge, similar to the FULL Z update.
+  - So with commit 160bdfc, a neighbour outside the list could be missed when two nearby
+    kernels differ in width by more than about KERNEL_CUTOFF/COMPRESSION_THRESHOLD − 1,
+    i.e. 4–5× with default settings. This never happened in any test above.
+  - With `NLIST_REBUILD=EXACT`, the recursive merges now search all kernels, at the cost
+    of one O(N) distance loop per recursive merge.
+  - The regtest got a setting where it does happen, with a threshold close to the cutoff
+    and a small list. The test fails if the recursive merges search only the list.
 - `NLIST_PACE_RESET` was only covered by the existing regtest `rt-opes_metad-mw-bis`
   (v2.9 rule).
 - The speed tests cover ala2 and ala4 in vacuum, where PLUMED is a large part of the
