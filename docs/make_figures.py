@@ -637,9 +637,172 @@ def figure_uncompressed():
     save(fig, "merge-uncompressed.png")
 
 
+# neighbor list variants: name -> color
+NLIST_COLOR = {"none": MUTED, "original": "#2a78d6", "exact": "#eb6834", "exact P0=1.5": "#1baf7a",
+               "exact P0=2": "#eda100", "exact P0=5": "#e87ba4"}
+
+
+def figure_nlist_scheme():
+    """Sketch of the neighbor list: the exact rebuild guarantee, and how a narrow kernel can be missed."""
+    from matplotlib.patches import Circle
+
+    rc, p0 = 2.0, 3.0
+    R, skin = np.sqrt(p0) * rc, (np.sqrt(p0) - 1) * rc
+    arrow = dict(arrowstyle="->", color=INK2, lw=0.8)
+    fig, axs = plt.subplots(1, 2, figsize=(12, 5.6), facecolor=SURFACE)
+
+    ax = axs[0]
+    rng = np.random.default_rng(3)
+    centers = rng.uniform(-5.6, 5.6, size=(45, 2))
+    inside = np.linalg.norm(centers, axis=1) <= R
+    ax.scatter(*centers[inside].T, s=16, color=NLIST_COLOR["original"], label="kernels in the list", zorder=3)
+    ax.scatter(*centers[~inside].T, s=16, facecolors="none", edgecolors=MUTED, label="kernels outside", zorder=3)
+    x = np.array([skin, 0.0])
+    ax.add_patch(Circle((0, 0), R, fill=False, ls="--", color=INK2, lw=1.2))
+    ax.add_patch(Circle((0, 0), skin, fill=False, color=NLIST_COLOR["exact"], lw=1.4))
+    ax.add_patch(Circle(x, rc, fill=False, ls=":", color=NLIST_COLOR["exact"], lw=2))
+    ax.plot(0, 0, "x", color=INK, ms=9, mew=2, zorder=4)
+    ax.plot(*x, "o", color=NLIST_COLOR["exact"], ms=8, zorder=4)
+    on = lambda r, deg, c=(0, 0): (c[0] + r * np.cos(np.radians(deg)), c[1] + r * np.sin(np.radians(deg)))  # noqa: E731
+    ax.annotate("list centre", (0, 0), xytext=(-5.4, -4.2), arrowprops=arrow, color=INK2, fontsize=8)
+    ax.annotate("CV now, at the edge of the skin", x, xytext=(0.6, 4.9), arrowprops=arrow, color=INK2, fontsize=8)
+    ax.annotate("list radius: $\\sqrt{P_0}\\,r_c\\sigma$", on(R, 135), xytext=(-5.4, 4.9), arrowprops=arrow,
+                color=INK2, fontsize=8)
+    ax.annotate("skin: $(\\sqrt{P_0}-1)\\,r_c\\sigma$", on(skin, 230), xytext=(-5.4, -5.2), arrowprops=arrow,
+                color=NLIST_COLOR["exact"], fontsize=8)
+    ax.annotate("cutoff $r_c\\sigma$ around the CV:\nstill inside the list", on(rc, -50, x), xytext=(1.6, -5.2),
+                arrowprops=arrow, color=NLIST_COLOR["exact"], fontsize=8)
+    ax.set_xlim(-5.8, 5.8)
+    ax.set_ylim(-5.8, 5.8)
+    ax.set_title("equal widths: exact as long as the CV stays within the skin", fontsize=10)
+    ax.legend(fontsize=8, frameon=False, labelcolor=INK2, loc="upper center", bbox_to_anchor=(0.5, -0.01), ncol=2)
+
+    ax = axs[1]
+    wide = np.array([[-1.2, 0.8], [0.6, -1.4], [-0.4, -0.6], [1.0, 1.1]])
+    for c in wide:
+        ax.add_patch(Circle(c, rc, color=NLIST_COLOR["original"], alpha=0.06, lw=0))
+        ax.plot(*c, "o", color=NLIST_COLOR["original"], ms=5)
+    s_n = 0.3
+    narrow = np.array([1.15, 0.0])
+    dev2 = np.mean(np.sum(wide**2, axis=1)) / 2  # mean squared distance per CV of the listed centres
+    plain = np.sqrt(0.5 * dev2)
+    ax.add_patch(Circle(narrow, rc * s_n, color=MUTED, alpha=0.4, lw=0))
+    ax.plot(*narrow, "o", color=INK, ms=4)
+    ax.add_patch(Circle((0, 0), R * s_n, fill=False, ls="--", color=INK2, lw=1))
+    ax.add_patch(Circle((0, 0), plain, fill=False, ls="-.", color=NLIST_COLOR["original"], lw=1.6))
+    ax.add_patch(Circle((0, 0), skin * s_n, fill=False, color=NLIST_COLOR["exact"], lw=1.8))
+    ax.annotate("", xy=(0.95 * plain, 0), xytext=(0, 0), arrowprops=dict(arrowstyle="->", color=INK, lw=1.4))
+    ax.plot(0, 0, "x", color=INK, ms=9, mew=2)
+    ax.annotate("wide kernels (σ = 1)", wide[3], xytext=(0.2, 2.3), arrowprops=arrow, color=NLIST_COLOR["original"],
+                fontsize=8)
+    ax.annotate("narrow kernel (σ = 0.3), just outside\nits list radius $\\sqrt{P_0}\\,r_c\\sigma$ (dashed)",
+                on(R * s_n, 120), xytext=(-2.5, 2.0), arrowprops=arrow, color=INK2, fontsize=8)
+    ax.annotate("its cutoff region", narrow + [0.3, -0.45], xytext=(1.3, -1.6), arrowprops=arrow, color=INK2,
+                fontsize=8)
+    ax.annotate("original rule: the CV can move this far,\ninto the cutoff region of the narrow kernel",
+                on(plain, 250), xytext=(-2.5, -2.4), arrowprops=arrow, color=NLIST_COLOR["original"], fontsize=8)
+    ax.annotate("EXACT: rebuild before, at $(\\sqrt{P_0}-1)\\,r_c\\sigma_{min}$", on(skin * s_n, 210),
+                xytext=(-2.5, -1.6), arrowprops=arrow, color=NLIST_COLOR["exact"], fontsize=8)
+    ax.set_xlim(-2.6, 2.6)
+    ax.set_ylim(-2.6, 2.6)
+    ax.set_title("mixed widths: the original rule can miss a narrow kernel", fontsize=10)
+
+    for ax in axs:
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        style(ax)
+        ax.grid(False)
+    fig.suptitle("OPES neighbor list (sketch with $r_c$ = 2σ for visibility; real cutoffs are 5–7σ)", color=INK,
+                 fontsize=11)
+    save(fig, "nlist-scheme.png")
+
+
+def figure_nlist_replay():
+    """Errors of the neighbor list variants on replayed trajectories, against no neighbor list."""
+    base = ROOT / "runs" / "nlist-replay"
+    if not (base / "ala4-opes-000" / "bias.out").exists():
+        print("missing runs/nlist-replay, skipping")
+        return
+    kT = 0.0083144626181532 * 300
+    variants = [("original", 2), ("EXACT rebuild only", 3)]  # columns of bias.out; 1 is the reference
+    colors = {"original": NLIST_COLOR["original"], "EXACT rebuild only": NLIST_COLOR["exact"]}
+    fig, axs = plt.subplots(1, 3, figsize=(15, 4.0), facecolor=SURFACE)
+    b = np.loadtxt(base / "ala4-opes-000" / "bias.out")
+    for name, j in variants:
+        err = np.abs(b[:, j] - b[:, 1]) / kT
+        axs[0].plot(b[:, 0], np.maximum(err, 1e-16), ".", ms=1.5, color=colors[name], label=name, rasterized=True)
+    axs[0].set_yscale("log")
+    axs[0].set_ylim(1e-14, 3)
+    axs[0].axhline(0.01, color=MUTED, lw=0.8, ls=":")
+    axs[0].set_xlabel("time (ps)")
+    axs[0].set_ylabel("|bias error| (kBT)")
+    axs[0].set_title("ala4 OPES_METAD, replica 0: bias error per frame", fontsize=10)
+    axs[0].legend(fontsize=8, frameon=False, labelcolor=INK2, loc="lower right", markerscale=6)
+    for k, (case, title) in enumerate((("opes", "OPES_METAD"), ("explore", "OPES_METAD_EXPLORE")), start=1):
+        ax = axs[k]
+        for system, ls in (("ala2", "-"), ("ala4", "--")):
+            for name, j in variants:
+                errs = []
+                for rep in ("000", "001", "002"):
+                    bb = np.loadtxt(base / f"{system}-{case}-{rep}" / "bias.out")
+                    errs.append(np.abs(bb[:, 4 + j] / bb[:, 5] - 1))  # zed columns: 5 is the reference
+                n = min(len(e) for e in errs)
+                ax.plot(bb[:n, 0], np.maximum(np.median([e[:n] for e in errs], axis=0), 1e-16), ls=ls,
+                        color=colors[name], lw=1.5, label=f"{system}, {name}")
+        ax.set_yscale("log")
+        ax.set_ylim(1e-12, 1e-3)
+        ax.set_xlabel("time (ps)")
+        ax.set_ylabel("|Z error| relative (median of 3)")
+        ax.set_title(f"Z drift, {title}", fontsize=10)
+        ax.legend(fontsize=7.5, frameon=False, labelcolor=INK2, loc="upper left")
+    for ax in axs:
+        style(ax)
+    fig.suptitle("Neighbor list against no neighbor list on replayed trajectories; EXACT + FULL Z is identical (error 0)",
+                 color=INK, fontsize=11)
+    save(fig, "nlist-replay.png")
+
+
+def figure_nlist_timing():
+    """Wall time of 10 ns MD runs with each neighbor list variant."""
+    path = ROOT / "runs" / "nlist-timing" / "times.dat"
+    if not path.exists():
+        print("missing runs/nlist-timing/times.dat, skipping")
+        return
+    rows = [l.split() for l in open(path) if not l.startswith("#")]
+    variants = ["none", "original", "exact", "exact P0=1.5", "exact P0=2", "exact P0=5"]
+    key = {"none": "none", "plain": "original", "exact": "exact", "exact_p1.5": "exact P0=1.5", "exact_p2": "exact P0=2",
+           "exact_p5": "exact P0=5"}
+    cases = [("ala2", "opes"), ("ala2", "explore"), ("ala4", "opes"), ("ala4", "explore")]
+    fig, axs = plt.subplots(1, 2, figsize=(14, 4.2), facecolor=SURFACE)
+    width = 0.13
+    for ci, (system, method) in enumerate(cases):
+        for vi, v in enumerate(variants):
+            sel = [r for r in rows if r[0] == system and r[1] == method and key[r[2]] == v]
+            t = np.array([float(r[4]) for r in sel])
+            frac = np.array([float(r[6]) / float(r[5]) for r in sel])
+            x = ci + (vi - 2.5) * width
+            axs[0].bar(x, t.mean(), width * 0.9, yerr=t.std(ddof=1), color=NLIST_COLOR[v], capsize=2,
+                       label=v if ci == 0 else None)
+            if v != "none":
+                axs[1].bar(x, 100 * frac.mean(), width * 0.9, color=NLIST_COLOR[v], label=v if ci == 0 else None)
+    for ax in axs:
+        ax.set_xticks(range(len(cases)))
+        ax.set_xticklabels([f"{s} / {m}" for s, m in cases], color=INK2)
+        style(ax)
+    axs[0].set_ylabel("wall time of 10 ns (s), mean ± s.d. of 3")
+    axs[0].set_title("run time", fontsize=10)
+    axs[0].legend(fontsize=8, frameon=False, labelcolor=INK2, ncol=2, loc="upper left")
+    axs[1].set_ylabel("kernels in the neighbor list (%)")
+    axs[1].set_title("size of the neighbor list", fontsize=10)
+    fig.suptitle("Neighbor list variants, PR cutoff and PLAIN merge (single core per run)", color=INK, fontsize=11)
+    save(fig, "nlist-timing.png")
+
+
 FIGURES = {f.__name__: f for f in (figure1, figure2, figure3, figure_merge_example, figure_mass_inflation,
                                    figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio, figure_many,
-                                   figure_uncompressed)}
+                                   figure_uncompressed, figure_nlist_scheme, figure_nlist_replay,
+                                   figure_nlist_timing)}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or FIGURES:

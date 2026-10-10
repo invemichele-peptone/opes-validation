@@ -59,6 +59,7 @@ Completed runs are reused, so `run` can be interrupted and restarted, or extende
 
 - [docs/kernel-cutoff.md](docs/kernel-cutoff.md): kernel truncation in OPES, PR [#1463](https://github.com/plumed/plumed2/pull/1463) vs a force-shifted alternative, with the tests run here.
 - [docs/kernel-merging.md](docs/kernel-merging.md): kernel compression, summing heights (v2.9) or weights (Sodkomkham et al.), tested with the PR cutoff.
+- [docs/nlist.md](docs/nlist.md): the OPES neighbor list, why it is not exact, and an exact version with the same speed.
 
 ## Commands
 

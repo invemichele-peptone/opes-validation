@@ -1,0 +1,261 @@
+# OPES neighbor list: making it exact
+
+With `NLIST`, OPES sums the kernels close to the current CV value only, instead of all of
+them. This note shows that the neighbor list of PLUMED v2.9 is not exact, in two ways, and
+tests a fix implemented as two new options. All runs use the cutoff of
+[plumed/plumed2#1463](https://github.com/plumed/plumed2/pull/1463)
+(`CUTOFF_SCHEME=PR`) and the v2.9 kernel merge (`MERGE_SCHEME=PLAIN`); see
+[kernel-cutoff.md](kernel-cutoff.md) and [kernel-merging.md](kernel-merging.md).
+
+**Summary.**
+- **Two sources of inexactness in v2.9:**
+  - The rebuild rule is a heuristic, which occasionally lets the list miss kernels
+    within the cutoff. On replayed ala4 trajectories with OPES_METAD this gave errors up
+    to 0.3 kBT in the bias and 44% in the force, on 0.25% of the frames.
+  - The incremental update of Z uses only the kernels in the list, so Z drifts by
+    10⁻⁷–10⁻⁵ in relative terms, and the error is never corrected.
+- **The fix:** `NLIST_REBUILD=EXACT` rebuilds the list before any kernel outside it can
+  come within the cutoff, and `NLIST_ZED=FULL` updates Z with all kernels.
+- **With both, the neighbor list is exact:** in MD, all 12 runs of 10 ns are bitwise
+  identical to the runs without a neighbor list.
+- **The cost is unmeasurable.** The speed-up is the same as with the v2.9 list:
+  - 2× for OPES_METAD on ala4 (3 CVs);
+  - 12–18% on ala2 (2 CVs);
+  - none for OPES_METAD_EXPLORE, whose wide kernels put most of them in the list.
+- **The dynamics are unchanged:** no difference on the quick tier (0 of 128 tests at
+  p < 0.01).
+- **Recommendation:** make the exact behaviour the only one whenever NLIST is used. The
+  neighbor list could then drop its "experimental" label, and be considered as a default
+  for OPES_METAD.
+
+## 1. How the neighbor list works (v2.9)
+
+With kernels of centre $\mathbf c_k$ and width $\boldsymbol\sigma_k$, truncated at a
+distance $r_c$ (`KERNEL_CUTOFF`) in units of σ, and parameters
+`NLIST_PARAMETERS` $= P_0, P_1$ (default 3, 0.5):
+
+- **Build.** The current CV value $\mathbf s$ becomes the list centre $\mathbf c_{\rm nl}$.
+  The list holds every kernel with
+  $\sum_i \big((c_{{\rm nl},i}-c_{k,i})/\sigma_{k,i}\big)^2 \le P_0\, r_c^2$, i.e. within
+  $\sqrt{P_0}\,r_c\approx 1.7\,r_c$ in units of its own σ. For each CV it also stores
+  $\mathrm{dev2}_i$, the mean of $(c_{{\rm nl},i}-c_{k,i})^2$ over the listed kernels.
+- **Use.** Bias, forces and the search of the kernel to merge with run over the listed
+  kernels only. New kernels are appended to the list.
+- **Rebuild.** The list is rebuilt when, along any single CV,
+  $(s_i-c_{{\rm nl},i})^2 > P_1\,\mathrm{dev2}_i$, and at replica exchanges.
+- **Z.** After each deposition, Z is updated incrementally: only the change due to the
+  new or merged kernels is added. With NLIST, the sum over the kernel centres in this
+  update also runs over the listed kernels only.
+
+In the runs here (10 ns, PR cutoff), the list holds 4–10% of the kernels with
+OPES_METAD and is rebuilt every 67–128 steps. With OPES_METAD_EXPLORE it holds 54–59%,
+rebuilt every 300–370 steps.
+
+## 2. What is not exact
+
+**The rebuild rule.**
+- A kernel outside the list is farther than $\sqrt{P_0}\,r_c\,\sigma_k$ from the list
+  centre. By the triangle inequality, it cannot be within the cutoff $r_c\,\sigma_k$ of
+  the current CV value as long as the CV has moved less than $(\sqrt{P_0}-1)\,r_c$ from
+  the list centre, in units of $\sigma_k$. This margin is the *skin*, as in the Verlet
+  lists of MD codes.
+- The v2.9 rule instead compares the displacement with the spread of the listed kernel
+  centres, in absolute units and per CV. With kernels of different widths, which is the
+  normal case since adaptive σ shrinks during a run, a narrow kernel just outside the
+  list can be reached before the list is rebuilt (Figure 1, right).
+
+![Neighbor list sketch](figures/nlist-scheme.png)
+
+*Figure 1. Left: with equal widths, the cutoff region around the CV stays inside the list
+as long as the CV is within the skin. Right: a narrow kernel just outside the list; the
+v2.9 rule lets the CV move into its cutoff region before rebuilding, the exact rule
+rebuilds first. Sketch with $r_c = 2\sigma$; real cutoffs are 5–7σ.*
+
+**The update of Z.**
+- When a new kernel is merged into an old, wide one, the change of the wide kernel
+  affects the KDE at all kernel centres within its cutoff.
+- With NLIST, the incremental update evaluates this change only at the centres of listed
+  kernels. Narrow kernels outside the list but within the cutoff of the wide one are
+  missed.
+- Since Z is never recomputed from scratch, the error accumulates. Comparing the Z in the
+  STATE files of the ala2 runs with an exact recomputation from the stored kernels:
+
+| ala2 run | relative Z error |
+|---|---|
+| without NLIST (control) | 10⁻¹⁴ (round-off) |
+| with NLIST | 10⁻⁷–1.6·10⁻⁵, growing in time |
+
+## 3. The fix
+
+Two options in `OPESmetad.cpp`, on the local branch `opes-force-shifted-kernel` (commit
+`160bdfc`). The defaults (`PLAIN`) reproduce v2.9.
+
+- **`NLIST_REBUILD=EXACT`** rebuilds when
+  $\sum_i \big((s_i-c_{{\rm nl},i})/\sigma_{{\rm min},i}\big)^2 > (\sqrt{P_0}-1)^2\,r_c^2$.
+  - $\sigma_{{\rm min},i}$ is the smallest σ of all kernels along CV $i$, at the last
+    rebuild.
+  - Kernels outside the list never change between rebuilds: merges involve only listed
+    kernels, and new kernels are appended to the list. So no kernel within the cutoff is
+    ever missed.
+  - $P_1$ is not used.
+- **`NLIST_ZED=FULL`** updates Z using all kernel centres. This costs one pass over the
+  kernels per deposition, i.e. every PACE steps.
+
+```c++
+} else if(nlist_exact_rebuild_) {
+  //kernels outside the list cannot be within the cutoff as long as this displacement is within the skin
+  double norm2=0;
+  for(unsigned i=0; i<ncv_; i++) {
+    const double dist_i=difference(i,nlist_center_[i],cv[i])/nlist_sigma_min_[i];
+    norm2+=dist_i*dist_i;
+  }
+  if(norm2>nlist_skin2_) {  // nlist_skin2_ = (sqrt(P0)-1)^2 * cutoff2_
+    nlist_update_=true;
+  }
+}
+```
+
+**Why the smallest σ of all kernels.** A first version used the smallest σ among the
+kernels outside the list only, which is enough for the guarantee. It never rebuilt the
+list when all kernels were inside it, as at the start, so the list grew to contain every
+kernel. That was still exact, but useless. The new regtest exposed it.
+
+**Regtest.** The new `rt-opes-nlist-exact` runs two PLUMED instances along the same
+random walk of two CVs, with the exact neighbor list and without one. It requires bias
+and forces to agree to 10⁻⁹ at every step, for OPES_METAD and OPES_METAD_EXPLORE.
+- It uses adaptive σ, so that kernels have different widths and most of them lie outside
+  the list.
+- As negative controls, it fails with `NLIST_ZED=PLAIN` and with `NLIST_REBUILD=PLAIN`.
+- All 41 OPES regtests pass.
+
+## 4. Tests
+
+### Exactness on replayed trajectories
+
+The saved trajectories of three ala2 and three ala4 runs (10 and 20 ns, one frame every
+500 steps) were replayed with four OPES actions side by side, one kernel per frame:
+no neighbor list, the v2.9 list, EXACT rebuild only, and EXACT + FULL Z
+(`build/replay_nlist.sh`). The rebuild rule is checked once per frame, i.e. every 500 MD
+steps, which overstates how often the v2.9 rule misses kernels compared with MD.
+
+| maximum over 3 replicas, vs no list | ala2 OPES_METAD | ala2 EXPLORE | ala4 OPES_METAD | ala4 EXPLORE |
+|---|---|---|---|---|
+| v2.9 list: bias error | 9·10⁻⁴ kBT | 2·10⁻⁴ | **0.30** (0.25% of frames > 0.01 kBT) | 3·10⁻⁵ |
+| v2.9 list: force error | 0.8% | 0.03% | **44%** (0.22% of frames > 1%) | 0.003% |
+| v2.9 list: Z error at the end | 1.1·10⁻⁵ | 8·10⁻⁶ | 9·10⁻⁷ | 1.5·10⁻⁶ |
+| EXACT rebuild only: bias error | 3·10⁻⁵ kBT | 5·10⁻⁵ | 8·10⁻⁶ | 4·10⁻⁶ |
+| EXACT rebuild only: Z error at the end | 5·10⁻⁶ | 4·10⁻⁶ | 2·10⁻⁷ | 2·10⁻⁷ |
+| **EXACT + FULL Z** | **0** | **0** | **0** | **0** |
+
+![Replay errors](figures/nlist-replay.png)
+
+*Figure 2. Left: bias error per frame in ala4 with OPES_METAD (replica 0), v2.9 list
+and EXACT rebuild only. EXACT + FULL Z has zero error and does not appear on the log
+scale. Middle and right: relative Z error over time, median of 3 replicas.*
+
+- With the exact rebuild, no kernel is missed. The remaining error of EXACT alone is the
+  Z drift, which FULL removes.
+- The result is bitwise identical to the run without a neighbor list: summing over the
+  listed kernels skips only kernels that contribute exactly zero.
+
+### Exactness in MD
+
+The 10 ns MD runs of the timing test below were compared row by row:
+- all 12 runs with `NLIST_REBUILD=EXACT NLIST_ZED=FULL` (ala2 and ala4, OPES_METAD and
+  explore, 3 replicas each) have COLVAR files identical to those without a neighbor list;
+- with the v2.9 list, 85–99.6% of the rows differ, i.e. the trajectories diverge early.
+
+### Speed
+
+These are 10 ns MD runs (`build/time_nlist.sh`), one core each, 18 runs at a time on a
+20-core machine, 3 replicas per variant, in random order. Run-to-run noise is about 5–10%.
+Variants: no list, the v2.9 list, and the exact list with $P_0$ = 3 (default), 1.5, 2
+and 5.
+
+| wall time relative to no list (no list = 1) | ala2 OPES_METAD | ala2 EXPLORE | ala4 OPES_METAD | ala4 EXPLORE |
+|---|---|---|---|---|
+| no list (seconds) | 90 s | 72 s | 265 s | 162 s |
+| v2.9 list | 0.87 | 0.97 | 0.51 | 1.02 |
+| exact, P0 = 3 | 0.88 | 0.99 | 0.53 | 1.03 |
+| exact, P0 = 1.5 | 0.82 | 1.00 | 0.53 | 0.91 |
+| exact, P0 = 2 | 0.85 | 0.99 | 0.52 | 0.96 |
+| exact, P0 = 5 | 0.82 | 0.99 | 0.56 | 1.00 |
+
+| | ala2 OPES_METAD | ala2 EXPLORE | ala4 OPES_METAD | ala4 EXPLORE |
+|---|---|---|---|---|
+| kernels in the list: v2.9 / exact P0 = 3 / P0 = 1.5 | 10% / 10% / 6% | 59% / 69% / 33% | 4.3% / 4.1% / 1.5% | 54% / 54% / 29% |
+| steps between rebuilds: v2.9 / exact P0 = 3 / P0 = 1.5 | 67 / 67 / 10 | 302 / ~5000 / 57 | 128 / 101 / 14 | 366 / ~2000 / 76 |
+
+![Timing](figures/nlist-timing.png)
+
+*Figure 3. Left: wall time of 10 ns, mean ± s.d. of 3 replicas. Right: share of the
+kernels in the neighbor list.*
+
+- **The exact rule costs nothing measurable.** It is as fast as the v2.9 list in every
+  case (0.53 vs 0.51 of the no-list time in ala4 OPES_METAD, within the noise). It even
+  rebuilds about as often with OPES_METAD.
+- **OPES_METAD benefits:** 2× on ala4 with 3 CVs, 12–18% on ala2 with 2 CVs.
+  OPES_METAD_EXPLORE does not, because its kernels are √γ wider and most of them fall in
+  the list.
+  - A smaller $P_0$ shrinks the list at the price of more rebuilds. With $P_0$ = 1.5 it
+    gives about 9% on ala4 explore, and no clear gain elsewhere.
+  - Since the exact rule keeps the list exact for any $P_0$ > 1, $P_0$ is now purely a
+    performance parameter.
+
+### Dynamics
+
+The exact neighbor list (`CUTOFF_SCHEME=PR NLIST_REBUILD=EXACT NLIST_ZED=FULL`) on the
+quick tier against the PR runs with the v2.9 list:
+- **0 of 128 tests at p < 0.01.**
+- In the systems that use NLIST, the main metrics agree within errors. For example:
+
+| system / method | transitions, v2.9 list vs exact | final ΔF, v2.9 list vs exact |
+|---|---|---|
+| ala2 OPES_METAD | 510 ± 21 vs 521 ± 22 (p = 0.52) | 8.68 ± 0.26 vs 8.53 ± 0.20 kJ/mol |
+| ala2 EXPLORE | 681 ± 11 vs 690 ± 9 (p = 0.51) | 9.36 ± 0.23 vs 9.48 ± 0.14 kJ/mol |
+| ala4 OPES_METAD | 27.1 ± 1.5 vs 26.5 ± 1.5 (p = 0.7) | – |
+| ala4 EXPLORE | 59.3 ± 1.9 vs 58.0 ± 1.9 (p = 0.4) | – |
+
+The errors of the v2.9 list are too rare and too small to change the sampling
+statistically. They do make the results depend on whether NLIST is used, as the MD
+comparison shows.
+
+## 5. Recommendation
+
+1. **Use the exact behaviour whenever NLIST is on.** Upstream, the simplest change is to
+   make `EXACT` and `FULL` the only behaviour, rather than options. The second
+   `NLIST_PARAMETERS` value and its validity check would then go away.
+   - It removes occasional bias and force errors and the Z drift.
+   - Results become independent of whether the neighbor list is used.
+   - It costs nothing measurable.
+2. **Drop the "experimental" label of NLIST** once the exact version is in. Consider
+   making it the default for OPES_METAD, where it gives up to 2× in 3D, and documenting
+   that it brings little for OPES_METAD_EXPLORE.
+3. **Keep $P_0$ = 3 as default.** Smaller values (1.5–2) help a little with
+   OPES_METAD_EXPLORE in 3D, and are now safe to use.
+
+## 6. Open points
+
+- Only the serial code paths were tested.
+  - Not tested: the OpenMP branch of the list build (with more than one thread), the
+    MPI reduction of $\sigma_{\rm min}$ (`NumParallel_` > 1) and multiple walkers
+    (`WALKERS_MPI`, `NLIST_PACE_RESET`).
+  - With multiple walkers the list becomes the union of the walkers' lists, so the
+    guarantee should hold, but the regtest does not cover it.
+- The speed tests cover ala2 and ala4 in vacuum, where PLUMED is a large part of the
+  cost. In larger systems the relative gain of the neighbor list will be smaller.
+
+## 7. Reproducing
+
+```bash
+uv sync
+build/build_plumed.sh pr1463 pr/1463
+build/build_plumed.sh nlist 160bdfcf3a345ca03eb585ac84a6a2f416db1285 /path/to/plumed2
+build/build_gromacs.sh 2024.3 v2.9-base   # or any PLUMED to patch with
+uv run opesval run -p pr1463 -t quick                 # if not run already
+uv run opesval run -p nlist -t quick --opes-extra "CUTOFF_SCHEME=PR NLIST_REBUILD=EXACT NLIST_ZED=FULL"
+uv run opesval compare pr1463 nlist+cutoff_scheme-pr+nlist_rebuild-exact+nlist_zed-full -t quick
+build/replay_nlist.sh nlist pr1463          # needs the quick-tier trajectories of pr1463
+build/time_nlist.sh nlist runs/nlist-timing  # on an otherwise idle machine
+uv run python docs/make_figures.py figure_nlist_scheme figure_nlist_replay figure_nlist_timing
+```
