@@ -71,14 +71,15 @@ CHANGES file has one entry per commit.
 |---|---|---|
 | `51f6bc2` | merge of the v2.9 branch (with #1463), without conflicts | – |
 | `bdd55e5` | force-shifted kernels (the "alternative" of [kernel-cutoff.md](kernel-cutoff.md)); `FES_from_State.py` of the tutorial uses the new kernels | 14 tests (see 2) |
-| `6a97dd5` | the neighbor list is used by default; `NLIST_OFF` switches it off; `NLIST` is a deprecated flag that only adds the `nlker` and `nlsteps` components; `NLIST_PACE_RESET` is deprecated, the reset being automatic with walkers | none |
+| `74a1f4e` | the neighbor list is used by default; `NLIST_OFF` switches it off; `NLIST` is a deprecated flag that only adds the `nlker` and `nlsteps` components; `NLIST_PACE_RESET` is removed, the reset being automatic with walkers | none |
 
 With the neighbor list on by default, printing `opes.*` gives the same columns as before: the two
 list components appear only if the old `NLIST` flag is given, so that inputs that print them keep
 working. Giving both `NLIST` and `NLIST_OFF`, or `NLIST_PARAMETERS` with `NLIST_OFF`, is an
 error. With `WALKERS_MPI`, the list is always reset after a deposition: it is the union of the
 walkers' lists there, which only the merges need (section 5 of [nlist.md](nlist.md)). This is what
-`NLIST_PACE_RESET` did, and the flag is now deprecated, with no effect. Results do not change.
+`NLIST_PACE_RESET` did, and the flag is removed: no input in PLUMED-NEST uses it. Results do not
+change.
 
 **After #1463.** #1463 was merged into v2.9 while this note was being written, as one commit
 with both of its changes: the centred-moment merge, which the first commit of the v2.9 branch
@@ -112,7 +113,7 @@ What the tests below mean after the rebase:
 |---|---|---|
 | `v2.9-base` ("current code") | `d650dbd`, v2.9 at the merge-base of #1463 | `v2.9-base-mpi` |
 | `pr-v29` | `1014914`, the v2.9 branch before the rebase on #1463; its source code differs from `c002b59` only by the derivative of #1463, the `FES_from_State.py` commit, the rename of a local variable, and the x86 fallback of the periodic wrap (now plain `nearbyint`, the same code on aarch64) | `pr-v29-mpi` |
-| `pr-master` | `b609c2c`, the master branch before the rebase; its source code differs from `6a97dd5` only by a fix of `FES_from_State.py`, the rename of a local variable, the x86 fallback of the periodic wrap, and the automatic list reset with walkers | `pr-master-mpi` |
+| `pr-master` | `b609c2c`, the master branch before the rebase; its source code differs from `74a1f4e` only by a fix of `FES_from_State.py`, the rename of a local variable, the x86 fallback of the periodic wrap, and the automatic list reset with walkers | `pr-master-mpi` |
 | `master-base` | `e5a05b1`, upstream master, for the timings of the PR to master | – |
 
 The OPES code of `d650dbd` differs from that of upstream v2.9, v2.10 and master only in input
