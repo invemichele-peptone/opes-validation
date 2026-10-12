@@ -61,6 +61,7 @@ Completed runs are reused, so `run` can be interrupted and restarted, or extende
 - [docs/kernel-merging.md](docs/kernel-merging.md): kernel compression, summing heights (v2.9) or weights (Sodkomkham et al.), tested with the PR cutoff.
 - [docs/nlist.md](docs/nlist.md): the OPES neighbor list, why it is not exact, and an exact version with the same speed.
 - [docs/opes-review.md](docs/opes-review.md): a review of the OPES module, with the bugs found (most reproduced), a faster kernel sum and a faster update of Z.
+- [docs/final-report.md](docs/final-report.md): the two proposed PRs (to v2.9 and to master) against the current code: regtests, sampling, MPI and multiple walkers with GROMACS built with MPI, and speed.
 
 ## Commands
 

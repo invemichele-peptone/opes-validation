@@ -1,6 +1,7 @@
 """Per-run analysis: free energy differences, transitions and exploration metrics."""
 
 import json
+import re
 
 import numpy as np
 import pandas as pd
@@ -39,11 +40,23 @@ def read_states(path):
     return states
 
 
-def fes_from_state(state, grid):
+def force_shifted_kernels(run_dir):
+    """Whether the run used force-shifted kernels, as OPES does from PLUMED 2.11 on (energy-shifted before)."""
+    for name in ("md.log", "plumed.log"):
+        path = run_dir / name
+        if path.exists():
+            match = re.search(r"PLUMED.*Version: (\d+)\.(\d+)", path.read_text(errors="replace"))
+            if match:
+                return (int(match.group(1)), int(match.group(2))) >= (2, 11)
+    raise RuntimeError(f"PLUMED version not found in {run_dir}")
+
+
+def fes_from_state(state, grid, force_shifted=False):
     """Free energy estimate (in kBT) of the bias encoded in a stored STATE.
 
     Same estimator as FES_from_State.py of the paper repositories.
     `grid` is a list of 1D arrays, one per CV; returns an array of shape [len(g) for g in grid].
+    The kernels are energy-shifted at the cutoff, or force-shifted if `force_shifted`.
     """
     s = state["set"]
     ncv = len(grid)
@@ -54,7 +67,8 @@ def fes_from_state(state, grid):
     explore = s["action"] == "OPES_METAD_EXPLORE_state"
     zed = float(s["zed"]) * float(s["counter"] if explore else s["sum_weights"])
     epsilon = float(s["epsilon"])
-    val_at_cutoff = np.exp(-0.5 * float(s["kernel_cutoff"]) ** 2)
+    cutoff2 = float(s["kernel_cutoff"]) ** 2
+    val_at_cutoff = np.exp(-0.5 * cutoff2)
     scale = float(s["biasfactor"]) if explore else 1.0
 
     points = np.stack([g.ravel() for g in np.meshgrid(*grid, indexing="ij")], axis=1)
@@ -68,7 +82,11 @@ def fes_from_state(state, grid):
             if period:
                 dist[:, :, i] -= period * np.round(dist[:, :, i] / period)
         norm2 = np.sum((dist / sigmas[None, :, :]) ** 2, axis=2)
-        prob[start : start + chunk] = np.sum(heights * np.maximum(np.exp(-0.5 * norm2) - val_at_cutoff, 0), axis=1)
+        if force_shifted:
+            kernel = np.where(norm2 < cutoff2, np.exp(-0.5 * norm2) - val_at_cutoff * (1 + 0.5 * (cutoff2 - norm2)), 0)
+        else:
+            kernel = np.maximum(np.exp(-0.5 * norm2) - val_at_cutoff, 0)
+        prob[start : start + chunk] = np.sum(heights * kernel, axis=1)
     prob = prob / zed + epsilon
     return (-scale * np.log(prob)).reshape([len(g) for g in grid])
 
@@ -146,7 +164,8 @@ def analyze_two_basins(system, run_dir):
     grid = make_grid(a.grid)
     mesh = np.meshgrid(*grid, indexing="ij")
     in_B = a.in_B(mesh[0])  # basins are defined on the first CV
-    dF_fes = np.array([deltaF(fes_from_state(s, grid), in_B) for s in states])
+    force_shifted = force_shifted_kernels(run_dir)
+    dF_fes = np.array([deltaF(fes_from_state(s, grid, force_shifted), in_B) for s in states])
 
     idx = np.clip(np.searchsorted(time, t_state, side="right") - 1, 0, len(time) - 1)
     dF_rew = running_deltaF_rew(cv, colvar["opes.bias"].to_numpy() / system.kbt, a.in_B, idx)

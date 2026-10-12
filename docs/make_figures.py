@@ -1,4 +1,4 @@
-"""Figures for docs/kernel-cutoff.md and docs/kernel-merging.md.
+"""Figures for the notes in docs/.
 
 usage: uv run python docs/make_figures.py [figure ...]
 The kernel-shape figures are analytic, the others need the runs described in the documents.
@@ -877,10 +877,96 @@ def figure_nlist_lowdim():
     save(fig, "nlist-lowdim.png")
 
 
+# final report: current code and the two proposed PRs
+FINAL = {"cur": ("v2.9-base", "current code", "#2a78d6"), "v29": ("pr-v29", "PR to v2.9", "#eda100"),
+         "master": ("pr-master", "PR to master", "#1baf7a")}
+
+
+def figure_final_transient():
+    """Early transient of ala2, 500 independent replicas per build: current code and the two PRs."""
+    runs = ROOT / "runs"
+    reps = range(500)
+    fig, axs = plt.subplots(1, 3, figsize=(13, 3.8), facecolor=SURFACE)
+    tf = {}
+    for ax, method, title in zip(axs[:2], ("opes", "explore"), ("OPES_METAD", "OPES_METAD_EXPLORE")):
+        for key, (lab, name, color) in FINAL.items():
+            dirs = [runs / lab / "transient/ala2" / method / f"{i:03d}" for i in reps]
+            if not all((d / "analysis.npz").exists() for d in dirs):
+                print(f"missing runs for {lab}/{method}, skipping")
+                plt.close(fig)
+                return
+            x = np.array([np.load(d / "analysis.npz")["deltaF_fes"] for d in dirs])
+            t = np.load(dirs[0] / "analysis.npz")["time"]
+            m, s = x.mean(0), x.std(0, ddof=1) / np.sqrt(len(x))
+            ax.plot(t, m, color=color, lw=2, marker="o", ms=4, label=name)
+            ax.fill_between(t, m - s, m + s, color=color, alpha=0.18, lw=0)
+            if method == "opes":
+                tf[key] = np.array([json.load(open(d / "analysis.json"))["t_first"] for d in dirs])
+        ax.axhline(9.05, color=INK2, ls="--", lw=1, label="reference ΔF")
+        ax.legend(fontsize=8, frameon=False, labelcolor=INK2, loc="upper right")
+        ax.set_xlabel("time (ps)")
+        ax.set_ylabel("ΔF from the bias (kJ/mol)")
+        ax.set_title(title, fontsize=10)
+        style(ax)
+    ax = axs[2]
+    for key, v in tf.items():
+        v = np.sort(v)
+        ax.step(np.r_[v[0], v], np.r_[0, np.arange(1, len(v) + 1) / len(v)], where="post", color=FINAL[key][2], lw=2,
+                label=f"{FINAL[key][1]} (median {np.median(v):.0f} ps)")
+    ax.set_xscale("log")
+    ax.set_xlim(5, 1000)
+    ax.set_ylim(0, 1.02)
+    ax.set_xlabel("time (ps)")
+    ax.set_ylabel("fraction of replicas")
+    ax.set_title("OPES_METAD: first transition to basin B", fontsize=10)
+    style(ax)
+    ax.legend(fontsize=8, frameon=False, labelcolor=INK2, loc="lower right")
+    fig.suptitle("ala2, first 0.5 ns: mean ± s.e.m. over 500 independent replicas per build", color=INK, fontsize=11)
+    save(fig, "final-transient-ala2.png")
+
+
+def figure_final_timing():
+    """OPES time per MD step, current code and the two PRs, with and without the neighbor list."""
+    batches = [("final-timing", "PR to v2.9", (("v2.9-base", "current code", "#2a78d6"), ("pr-v29", "PR to v2.9", "#eda100"))),
+               ("final-timing-master", "PR to master",
+                (("master-base", "upstream master", "#2a78d6"), ("pr-master", "PR to master", "#1baf7a")))]
+    fig, axs = plt.subplots(1, 2, figsize=(13, 4.4), facecolor=SURFACE, sharey=True)
+    for ax, (batch, title, builds) in zip(axs, batches):
+        path = ROOT / "runs" / batch / "times.dat"
+        if not path.exists():
+            print(f"missing {path}, skipping")
+            plt.close(fig)
+            return
+        rows = [line.split() for line in open(path) if not line.startswith("#")]
+        cases = list(dict.fromkeys(r[1] for r in rows))
+        width = 0.2
+        n = 0
+        for lab, name, color in builds:
+            for variant, alpha, suffix in (("nolist", 0.45, "without list"), ("list", 1.0, "with list")):
+                means, errs = [], []
+                for c in cases:
+                    v = [float(r[6]) / int(r[4]) * 1e6 for r in rows if r[0] == lab and r[1] == c and r[2] == variant]
+                    means.append(np.mean(v))
+                    errs.append(np.std(v, ddof=1))
+                x = np.arange(len(cases)) + (n - 1.5) * width
+                ax.bar(x, means, width, yerr=errs, color=color, alpha=alpha, label=f"{name}, {suffix}",
+                       error_kw={"ecolor": INK2, "lw": 0.8})
+                n += 1
+        ax.set_xticks(np.arange(len(cases)), cases, rotation=30, ha="right")
+        ax.set_yscale("log")
+        ax.set_title(title, fontsize=10)
+        ax.legend(fontsize=8, frameon=False, labelcolor=INK2, loc="upper left")
+        style(ax)
+    axs[0].set_ylabel("OPES time per MD step (µs)")
+    fig.suptitle("cost of OPES, one core per run, mean ± s.d. of 3 replicas", color=INK, fontsize=11)
+    save(fig, "final-timing.png")
+
+
 FIGURES = {f.__name__: f for f in (figure1, figure2, figure3, figure_merge_example, figure_mass_inflation,
                                    figure_ala4, figure_transient_split, figure_zed, figure_zed_ratio, figure_many,
                                    figure_uncompressed, figure_nlist_scheme, figure_nlist_replay,
-                                   figure_nlist_timing, figure_nlist_lowdim)}
+                                   figure_nlist_timing, figure_nlist_lowdim, figure_final_transient,
+                                   figure_final_timing)}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or FIGURES:
