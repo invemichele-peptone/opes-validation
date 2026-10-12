@@ -59,7 +59,7 @@ moved to master on its own:
 | `b2ca08d` | the neighbor list becomes exact (exact rebuild rule, Z from all kernels, recursive merges over all kernels), as the only behaviour; the second value of NLIST_PARAMETERS is ignored with a warning; regtest `rt-opes-nlist-exact` | `rt-opes_metad-mw-bis`, last digit of 5 force lines (see 2) |
 | `f516d94` | documentation: continue with a static bias with `UPDATE_UNTIL=0` | none |
 | `12f615a` | `FES_from_State.py` of the tutorial: `--der` without the cutoff shift, as PLUMED after #1463 | none |
-| `cd2dbb5` | faster kernel sums: the two-pass sum, the list rebuild and the Z update with the block code, Z at a KERNELS restart, no allocations in `calculate()` | none |
+| `c002b59` | faster kernel sums: the two-pass sum, the list rebuild and the Z update with the block code, Z at a KERNELS restart, no allocations in `calculate()` | none |
 
 None of the keywords added for the study (`CUTOFF_SCHEME`, `MERGE_SCHEME`, `NLIST_REBUILD`,
 `NLIST_ZED`) is in the PRs. The kernels and the merge rule are those of v2.9 with #1463. The
@@ -69,9 +69,9 @@ CHANGES file has one entry per commit.
 
 | commit | what | references changed |
 |---|---|---|
-| `d260aa2` | merge of the v2.9 branch (with #1463), with the only conflict (the header of `OPESmetad.cpp`) resolved | – |
-| `1a5578c` | force-shifted kernels (the "alternative" of [kernel-cutoff.md](kernel-cutoff.md)); `FES_from_State.py` of the tutorial uses the new kernels | 14 tests (see 2) |
-| `7f44b0e` | the neighbor list is used by default; `NLIST_OFF` switches it off; `NLIST` is a deprecated flag that only adds the `nlker` and `nlsteps` components | none |
+| `51f6bc2` | merge of the v2.9 branch (with #1463), without conflicts | – |
+| `bdd55e5` | force-shifted kernels (the "alternative" of [kernel-cutoff.md](kernel-cutoff.md)); `FES_from_State.py` of the tutorial uses the new kernels | 14 tests (see 2) |
+| `b07a1eb` | the neighbor list is used by default; `NLIST_OFF` switches it off; `NLIST` is a deprecated flag that only adds the `nlker` and `nlsteps` components | none |
 
 With the neighbor list on by default, printing `opes.*` gives the same columns as before: the two
 list components appear only if the old `NLIST` flag is given, so that inputs that print them keep
@@ -86,7 +86,7 @@ sum uses the derivative of #1463. Two references were regenerated (section 2); e
 reference of #1463 passes unchanged.
 
 The master branch was rebuilt on the rebased v2.9 branch. Its final tree is the one tested here,
-apart from three texts: the CHANGES entries of #1463 in `CHANGES/v2.9.md`, its own CHANGES
+apart from the x86 fallback of the periodic wrap (see section 7) and three texts: the CHANGES entries of #1463 in `CHANGES/v2.9.md`, its own CHANGES
 entry, and the README of `rt-opes-kernel-derivative`. With #1463 in v2.9, the force-shifted kernels
 of master change the forces a second time. The bias was the same before and after #1463; now
 it changes as well, in the far tails.
@@ -108,8 +108,8 @@ What the tests below mean after the rebase:
 | label | source | MPI build |
 |---|---|---|
 | `v2.9-base` ("current code") | `d650dbd`, v2.9 at the merge-base of #1463 | `v2.9-base-mpi` |
-| `pr-v29` | `1014914`, the v2.9 branch before the rebase on #1463; its source code differs from `cd2dbb5` only by the derivative of #1463, the `FES_from_State.py` commit and the rename of a local variable | `pr-v29-mpi` |
-| `pr-master` | `b609c2c`, the master branch before the rebase; its source code differs from `7f44b0e` only by a fix of `FES_from_State.py` and the rename of a local variable | `pr-master-mpi` |
+| `pr-v29` | `1014914`, the v2.9 branch before the rebase on #1463; its source code differs from `c002b59` only by the derivative of #1463, the `FES_from_State.py` commit, the rename of a local variable, and the x86 fallback of the periodic wrap (now plain `nearbyint`, the same code on aarch64) | `pr-v29-mpi` |
+| `pr-master` | `b609c2c`, the master branch before the rebase; its source code differs from `b07a1eb` only by a fix of `FES_from_State.py`, the rename of a local variable, and the x86 fallback of the periodic wrap | `pr-master-mpi` |
 | `master-base` | `e5a05b1`, upstream master, for the timings of the PR to master | – |
 
 The OPES code of `d650dbd` differs from that of upstream v2.9, v2.10 and master only in input
@@ -380,10 +380,12 @@ the variants of [nlist.md](nlist.md) section 5 (`build/time_prs.sh`).
 
 ## 7. Not tested, and open points
 
-- **x86 timing.** The branch-free periodic wrap uses a conversion to `int` on x86 builds without
-  SSE4.1, which is the default x86-64 target. That path has the same logic but was never timed;
-  all timings here are on aarch64. Checked on its own, it agrees with `nearbyint` on 10⁸ random
-  values, and differs only at exact half-period ties, where both choices give the same distance.
+- **x86 builds.** The periodic wrap uses `std::nearbyint`. It is a single instruction on aarch64
+  and on x86 builds with SSE4.1 (e.g. `-march=native`). With the default x86-64 flags (plain
+  `configure`, conda-forge, distribution packages), GCC and clang compile it to a library call per
+  kernel and per periodic CV. With that call forced on aarch64, the kernel sum of ala4 (3 periodic
+  CVs, no list) costs 6.5 instead of 3.3 ns per kernel with OPES_METAD, and 9.7 instead of 5.7 with
+  EXPLORE. That is still faster than the current code (8.9 and 20.9). Not timed on x86.
 - **Untested settings for the default neighbor list:** 4 or more CVs, many walkers, very small
   SIGMA_MIN. The worst case is a rebuild at every step, about one extra pass over the kernels.
 - **Policy.** The speed-up commit is a performance change on the oldest maintained branch. It is
