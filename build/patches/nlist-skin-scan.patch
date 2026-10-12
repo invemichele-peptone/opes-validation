@@ -1,0 +1,137 @@
+diff --git a/src/opes/OPESmetad.cpp b/src/opes/OPESmetad.cpp
+index 63f610e69..1454e0a1a 100644
+--- a/src/opes/OPESmetad.cpp
++++ b/src/opes/OPESmetad.cpp
+@@ -250,7 +250,8 @@ private:
+   bool nlist_update_;
+   bool nlist_pace_reset_;
+   bool nlist_exact_rebuild_; //rebuild before a kernel outside the list can get within the cutoff
+-  double nlist_skin2_; //square of the largest displacement allowed, in units of nlist_sigma_min_
++  double nlist_skin2_; //square of the largest displacement allowed, in units of nlist_sigma_min_, set at each rebuild
++  double nlist_max_skin_; //the list is rebuilt after this displacement, even if no kernel is close to entering it
+   std::vector<double> nlist_sigma_min_; //smallest sigma of all kernels, for each CV, at the last rebuild
+   bool nlist_full_zed_; //update Zed with all the kernels, not only those in the list
+ //all kernels, with the same layout as the summed ones, to rebuild the list and update Zed quickly
+@@ -260,7 +261,7 @@ private:
+   std::vector<double> nlist_all_height_;
+   std::vector<double> nlist_all_sigma_min_; //smallest sigma of all kernels, for each CV
+   void updateNlistAll();
+-  void listKernels(const unsigned,const unsigned,std::vector<unsigned>&) const;
++  void listKernels(const unsigned,const unsigned,std::vector<unsigned>&,double&) const;
+ 
+   bool calc_work_;
+   double work_;
+@@ -382,9 +383,10 @@ void OPESmetad<mode>::registerKeywords(Keywords& keys) {
+   keys.addFlag("NLIST_PACE_RESET",false,"force the reset of the neighbor list at each PACE. Can be useful with WALKERS_MPI");
+   keys.add("compulsory","NLIST_REBUILD","PLAIN","when to rebuild the neighbor list. "
+            "PLAIN: when the CV moves by more than a fraction of the spread of the listed kernels (v2.9). "
+-           "EXACT: before any kernel outside the list can get within KERNEL_CUTOFF, i.e. when the displacement "
+-           "from the list center, in units of the smallest sigma of the kernels, "
+-           "exceeds (sqrt(NLIST_PARAMETERS[0])-1)*KERNEL_CUTOFF");
++           "EXACT: before any kernel outside the list can get within KERNEL_CUTOFF. The largest safe displacement "
++           "from the list center, in units of the smallest sigma of the kernels, is found at each rebuild from "
++           "the distance and sigma of the kernels outside the list. It is at least (sqrt(NLIST_PARAMETERS[0])-1)*KERNEL_CUTOFF "
++           "and at most twice that");
+   keys.add("compulsory","NLIST_ZED","PLAIN","which kernels are used to update Zed when using the neighbor list. "
+            "PLAIN: only those in the list (v2.9). FULL: all of them, so that Zed is exact");
+   keys.addFlag("FIXED_SIGMA",false,"do not decrease sigma as the simulation proceeds. Can be added in a RESTART, to keep in check the number of compressed kernels");
+@@ -575,7 +577,11 @@ OPESmetad<mode>::OPESmetad(const ActionOptions& ao)
+   parse("NLIST_REBUILD",nlist_rebuild);
+   plumed_massert(nlist_rebuild=="PLAIN" || nlist_rebuild=="EXACT","NLIST_REBUILD must be PLAIN or EXACT");
+   nlist_exact_rebuild_=(nlist_rebuild=="EXACT");
+-  nlist_skin2_=std::pow(std::sqrt(nlist_param_[0])-1,2)*cutoff2_;
++  nlist_skin2_=std::pow(std::sqrt(nlist_param_[0])-1,2)*cutoff2_; //the smallest skin, replaced at each rebuild
++  nlist_max_skin_=2*(std::sqrt(nlist_param_[0])-1)*std::sqrt(cutoff2_);
++  if(std::getenv("OPES_SKIN_FACTOR")) { //TEMPORARY, for the scan of the largest skin
++    nlist_max_skin_=std::atof(std::getenv("OPES_SKIN_FACTOR"))*(std::sqrt(nlist_param_[0])-1)*std::sqrt(cutoff2_);
++  }
+   nlist_sigma_min_.resize(ncv_,std::numeric_limits<double>::max());
+   std::string nlist_zed;
+   parse("NLIST_ZED",nlist_zed);
+@@ -1724,26 +1730,32 @@ void OPESmetad<mode>::updateNlist(const std::vector<double>& new_center) {
+   const unsigned begin=std::min(rank_*share,size);
+   const unsigned end=std::min(begin+share,size);
+   constexpr unsigned omp_block=64;
++  double skin=nlist_max_skin_;
+   if(NumOMP_==1 || end-begin<2*NumOMP_*omp_block) {
+-    listKernels(begin,end,nlist_index_);
++    listKernels(begin,end,nlist_index_,skin);
+   } else {
+     const unsigned nblocks=(end-begin+omp_block-1)/omp_block;
+     #pragma omp parallel num_threads(NumOMP_)
+     {
+       std::vector<unsigned> private_nlist_index;
++      double private_skin=nlist_max_skin_;
+       #pragma omp for nowait
+       for(unsigned n=0; n<nblocks; n++) {
+         const unsigned b=begin+n*omp_block;
+-        listKernels(b,std::min(b+omp_block,end),private_nlist_index);
++        listKernels(b,std::min(b+omp_block,end),private_nlist_index,private_skin);
+       }
+       #pragma omp critical
+-      nlist_index_.insert(nlist_index_.end(),private_nlist_index.begin(),private_nlist_index.end());
++      {
++        nlist_index_.insert(nlist_index_.end(),private_nlist_index.begin(),private_nlist_index.end());
++        skin=std::min(skin,private_skin);
++      }
+     }
+     if(recursive_merge_) {
+       std::sort(nlist_index_.begin(),nlist_index_.end());
+     }
+   }
+   if(NumParallel_>1) {
++    comm.Min(skin);
+     std::vector<int> all_nlist_size(NumParallel_);
+     all_nlist_size[rank_]=nlist_index_.size();
+     comm.Sum(all_nlist_size);
+@@ -1764,7 +1776,9 @@ void OPESmetad<mode>::updateNlist(const std::vector<double>& new_center) {
+       }
+     }
+   }
+-  if(!nlist_exact_rebuild_) { //the square deviation, needed only by the PLAIN rebuild rule
++  if(nlist_exact_rebuild_) { //a tiny margin for round-off, so that the list stays exact
++    nlist_skin2_=skin*skin*(1-1e-12);
++  } else { //the square deviation, needed only by the PLAIN rebuild rule
+     std::vector<double> dev2(ncv_,0.);
+     for(unsigned k=rank_; k<nlist_index_.size(); k+=NumParallel_) {
+       for(unsigned i=0; i<ncv_; i++) {
+@@ -1810,12 +1824,18 @@ void OPESmetad<mode>::updateNlistAll() {
+ }
+ 
+ template <class mode>
+-void OPESmetad<mode>::listKernels(const unsigned begin,const unsigned end,std::vector<unsigned>& index) const {
++void OPESmetad<mode>::listKernels(const unsigned begin,const unsigned end,std::vector<unsigned>& index,double& skin) const {
+   //appends to index the kernels from begin to end within the neighbor list cutoff.
+-  //As in sumKernels(), the squared distances of a block of kernels are computed without branches
++  //As in sumKernels(), the squared distances of a block of kernels are computed without branches.
++  //With NLIST_REBUILD=EXACT, skin is lowered to the smallest displacement from the list center, in units of
++  //nlist_sigma_min_, that can bring one of the kernels outside the list within the cutoff
+   constexpr unsigned block=128;
+   double norm2[block];
+   const unsigned size=kernels_.size();
++  const double list2=nlist_param_[0]*cutoff2_;
++  const double cutoff=std::sqrt(cutoff2_);
++  //only the kernels closer than this can lower the skin below its largest value
++  const double shell2=nlist_exact_rebuild_?std::pow(cutoff+nlist_max_skin_,2):0;
+   for(unsigned b=begin; b<end; b+=block) {
+     const unsigned nb=std::min(block,end-b);
+     for(unsigned k=0; k<nb; k++) {
+@@ -1842,8 +1862,17 @@ void OPESmetad<mode>::listKernels(const unsigned begin,const unsigned end,std::v
+       }
+     }
+     for(unsigned k=0; k<nb; k++) {
+-      if(norm2[k]<=nlist_param_[0]*cutoff2_) {
++      if(norm2[k]<=list2) {
+         index.push_back(b+k);
++      } else if(norm2[k]<shell2) {
++        //at a distance d in units of its own sigma, the kernel gets within the cutoff only after a displacement
++        //of d-cutoff in those units, which is at least (d-cutoff)/rho in units of nlist_sigma_min_,
++        //with rho the largest ratio nlist_sigma_min_/sigma over the CVs (by the triangle inequality)
++        double rho=0;
++        for(unsigned i=0; i<ncv_; i++) {
++          rho=std::max(rho,nlist_sigma_min_[i]*nlist_all_inv_sigma_[i*size+b+k]);
++        }
++        skin=std::min(skin,(std::sqrt(norm2[k])-cutoff)/rho);
+       }
+     }
+   }

@@ -413,6 +413,9 @@ ala4).*
 - **Remaining cost with the list:** about 2.2 µs per step at 10⁴ kernels (long jpcl run).
   - Calculate takes 1.57 µs: the fixed 0.47, the sum over ~150 listed kernels (~0.1),
     and about 1 µs for the rebuilds and the copy of the listed kernels after each.
+    - Most of the fixed 0.47 µs is what PLUMED costs for any bias action.
+    - A skin set at each rebuild, from the kernels just outside the list, gives only
+      ~15% fewer rebuilds and was not adopted ([opes-review.md](opes-review.md), S3).
   - Update takes 0.59 µs, the same as without a list.
     - 0.2–0.3 µs is writing STATE, which this input does every 100 depositions
       (`STORE_STATES`).

@@ -30,6 +30,7 @@ How it was done:
 | M5 | OPES_METAD, adaptive σ | `update()` returns before the STATE write during the first ADAPTIVE_SIGMA_STRIDE steps | no STATE if a checkpoint falls in that window | inspection |
 | S1 | OPES_METAD kernel sum | per-kernel early exit and data layout | a two-pass version is 2.7–3.7× faster on the kernel sum (ala4), with the same results to 4·10⁻¹⁶; in MD, ala4 runs 2.0× faster (OPES_METAD) and 1.4× faster (EXPLORE) | micro-benchmark, MD |
 | S2 | OPES_METAD, update of Z at each deposition | the changed kernels are evaluated against all kernels one at a time, as in the old sum | with the code of S1 this update is 6–8× faster, and OPES 2–9% faster with the exact neighbor list | MD |
+| S3 | OPES_METAD, what is left | two vector allocations per step; Z at a KERNELS restart from all pairs of kernels, one at a time | OPES up to 3% faster; Z at the restart 4× faster, the restart itself 3–4%. A per-kernel skin for the exact list did not pay off | MD |
 
 M2 and E1–E6 come from the review of OPES_EXPANDED and the ECVs; M2 was then found and
 measured in OPES_METAD as well. Line numbers refer to master c3506e974.
@@ -45,6 +46,7 @@ that fails without the fix:
 | 4c1f694 | S1, the two-pass kernel sum (section 3) |
 | b880f90 | faster neighbor list rebuild, with the block code of the sum (see [nlist.md](nlist.md), section 5) |
 | 403d480 | S2, the update of Z with the block code of the sum (section 3) |
+| e0f56f8 | S3, no allocations at each step, and Z at a KERNELS restart with the block code (section 3) |
 
 - E4 is now also reproduced: in a two-walker run, swapping the trajectories should swap
   the walkers' `work`. Before the fix, walker 0 got 16.5 instead of 2.36 on the same
@@ -451,6 +453,95 @@ deposition:
 - **With the exact list, the rebuilds cost more than the whole update.** They happen in
   the calculate step: every ~37 steps for jpcl, about 3 µs each.
 
+### What else could be sped up (S3)
+
+**Most of the remaining fixed cost is not OPES.** With a RESTRAINT of zero strength in place
+of a 1D OPES_METAD (ala2, 403d480):
+- The RESTRAINT costs 0.49 µs per step: 0.36 in calculate, 0.08 in apply, 0.04 in update.
+  That is the cost of running any bias action in PLUMED.
+- OPES_METAD costs 0.62 µs, so only 0.13–0.19 µs is specific to OPES.
+- The whole PLUMED step costs about 4.5 µs in both cases, with two TORSIONs and a PRINT.
+  The MD step costs 11–14 µs for ala2 in vacuum and 170–350 µs for a solvated GPU run.
+
+**The candidates** (µs per MD step):
+
+| what | cost now | idea | expected gain | drawbacks | status |
+|---|---|---|---|---|---|
+| rebuilds of the exact list, 2 CVs | ~0.6 at 10⁴ kernels (a rebuild every 18 steps), ~0.1 at 3000 | (a) a skin per rebuild, from the distance and σ of the kernels outside the list | up to half | a subtler exactness argument, more work per rebuild | tried, not adopted (below) |
+| | | (b) a grid over CV space, for up to 3 CVs | most of it | much more code: periodic CVs, kernels whose σ differs up to 5×, merges that move centres | not done |
+| exp of the listed kernels within the cutoff | 0.1–0.3 | a vectorised exp (glibc libmvec, SLEEF) | about half | compiler flags and libraries, changes in the last bit, portability | not done |
+| STATE writes | 0.2–0.3, only when written often (the jpcl input: every 100 depositions) | format each kernel line at once, instead of field by field (~2.5 µs per line now) | several × on the writes | bypasses the field bookkeeping of PLUMED's files; the format must not change | not done |
+| merge search and per-CV copies at a deposition | ≤0.04 and 0.02–0.05 | block code for the merge search, kernels stored per CV | most of it | a refactor of the kernel storage, which restart, STATE, walkers and merges use | not done |
+| OPES's own per-step cost | 0.13–0.19 | no allocations, branch-free rebuild check | a few hundredths | none | done, e0f56f8 |
+| Z at a KERNELS restart | 0.8 s once, at 10⁴ kernels | block code of the sum | 4× | none | done, e0f56f8 |
+
+**(a) A skin per rebuild: not adopted.** The EXACT rule allows a displacement of
+$(\sqrt{P_0}-1)\,r_c$ in units of the smallest σ of all kernels. A tighter bound uses each
+kernel outside the list:
+- A kernel at distance $d$ in units of its own σ gets within the cutoff only after a
+  displacement of $d-r_c$ in those units. That is at least $(d-r_c)/\rho$ in units of the
+  smallest σ, where $\rho$ is the largest ratio of the smallest σ to its σ over the CVs.
+- The skin is the minimum of this over the kernels outside the list. It is never smaller
+  than the current one, and the list stays exact.
+- Without kernels nearby the list would never be rebuilt, so the skin is capped at a factor
+  $f$ times the current one.
+
+A temporary build (`build/patches/nlist-skin-scan.patch`) read $f$ from the environment.
+$f$ = 1 is the current rule. Exact list, 2 runs per case (rebuild interval in steps / listed
+kernels / OPES µs per step):
+
+| case | f = 1 | f = 2 | f = 4 |
+|---|---|---|---|
+| ala2 φ,ψ, jpcl | 37 / 102 / 1.09 | 43 / 102 / 1.11 | 43 / 102 / 1.17 |
+| Müller–Brown 2D, OPES_METAD | 49 / 137 / 0.99 | 57 / 137 / 1.01 | 87 / 138 / 1.05 |
+| ala4 3 CVs, OPES_METAD | 102 / 327 / 1.57 | 117 / 327 / 1.62 | 2553 / 2214 / 4.12 |
+| ala2 φ,ψ, OPES_METAD | 70 / 79 / 0.85 | 2549 / 297 / 1.08 | 5002 / 515 / 1.30 |
+
+- **Where many kernels lie just outside the list**, they set the skin, and rebuilds are only
+  ~15% rarer. Probably kernels with about the smallest σ are always among them, so the
+  bound hardly improves. The extra work in each rebuild cancels the gain.
+- **Where the cap is reached instead**, the list is rarely rebuilt and keeps every new
+  kernel, and OPES gets slower: up to 2.6× for ala4 at $f$ = 4.
+- So the rule of b880f90 stays.
+
+**Per-step cost (e0f56f8).** `calculate()` now keeps the CV values and the derivatives in
+member buffers, instead of allocating two vectors at every step. The EXACT check also wraps
+periodic CVs without branches, as the sum does. Concurrent A/B against 403d480, aligned
+builds, 6 runs each, OPES µs per step:
+
+| case | no list | exact list |
+|---|---|---|
+| ala2 φ, OPES_METAD | 0.609 → 0.601 | 0.621 → 0.612 |
+| Müller–Brown 1D, OPES_METAD | 0.644 → 0.631 | 0.634 → 0.617 |
+| ala2 φ,ψ, OPES_METAD | 1.328 → 1.308 | 0.886 → 0.866 |
+| ala2 φ,ψ, jpcl | 3.042 → 3.015 | 1.111 → 1.087 |
+| ala4 3 CVs, OPES_METAD | 6.515 → 6.509 | 1.597 → 1.581 |
+
+- OPES is up to 0.03 µs per step faster, up to 3% of its time. Wall times do not change
+  measurably.
+- Most of what OPES itself still costs at each step is probably the sum over the listed
+  kernels. In 1D about 6 of the ~10 listed kernels are within the cutoff, and each needs
+  an exp.
+
+**Z at a KERNELS restart (e0f56f8).** Without a STATE file, a restart reads all deposited
+kernels from the KERNELS file, merges them again and computes Z from scratch. Z is now
+computed with the kernel sum used for the bias, instead of all pairs of kernels one at a
+time.
+- Test: restart from the KERNELS file of a long jpcl run, with 10⁵ deposited kernels
+  compressed to 10⁴, on one Cortex-A725 core. Each build also ran with `NO_ZED`, which
+  skips Z, to time Z alone.
+- Z takes 0.2 s instead of 0.8 s, and agrees to all 15 printed digits.
+- The restart as a whole takes 13 s and is only 3–4% faster. Most of it is reading the
+  file and merging every kernel again. A STATE file avoids both.
+
+Checks of e0f56f8:
+- All 45 OPES regtests pass, with 1 and 4 threads.
+- The replays are bitwise identical to 403d480 serially, with 4 MPI processes and with
+  4 walkers.
+- With OpenMP they differ by up to 9·10⁻¹². The order of the OpenMP reductions changes
+  from run to run.
+- Kernel counts, list sizes and rebuild intervals are identical.
+
 ## 4. Reproducing
 
 PLUMED builds: `pr1463` and `nlist` as in [nlist.md](nlist.md); `nlist-mpi` with
@@ -473,6 +564,24 @@ CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast-a64 403d480b42b2
 build/ab_nlist_cases.sh runs/zed-ab fastnl-a64 zfast-a64 ala2-1d-opes mueller2d-opes ala2-2d-opes ala2-2d-jpcl ala4-3d-opes ala4-3d-explore
 SCALE=10 REPS=2 build/ab_nlist_cases.sh runs/zed-ab-long fastnl-a64 zfast-a64 ala2-2d-jpcl
 uv run python build/summarize_nlist_cases.py --pool runs/zed-ab/zfast-a64-1 runs/zed-ab/zfast-a64-2
+
+# S3: per-step cost and KERNELS restart (e0f56f8), and the scan of the per-kernel skin
+build/build_plumed.sh zfast2 e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d /path/to/plumed2
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast2-a64 e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d /path/to/plumed2
+build/replay_nlist.sh zfast2 pr1463 runs/nlist-replay-zfast2
+uv run python build/check_replay.py runs/nlist-replay-zfast2 runs/nlist-replay-zfast
+build/ab_nlist_cases.sh runs/floor-ab zfast-a64 zfast2-a64 ala2-1d-opes mueller1d-opes ala2-2d-opes mueller2d-opes ala2-2d-jpcl ala4-3d-opes
+# the skin scan: commit the patch on a branch from e0f56f8, build it as skinscan-a64, then for f in 1 2 4 8
+git -C /path/to/plumed2 apply /path/to/opes-validation/build/patches/nlist-skin-scan.patch
+OPES_SKIN_FACTOR=$f VARIANTS=exact REPS=2 CORES="5 6 7 8 9" build/time_nlist_cases.sh runs/skinscan/f$f skinscan-a64 \
+  ala2-1d-opes ala2-2d-opes mueller2d-opes ala2-2d-jpcl mueller2d-explore ala4-3d-opes ala4-3d-explore
+# KERNELS restart: KERNELS.in from runs/zed-ab-long/zfast-a64-1/ala2-2d-jpcl-exact-0, timed with and without NO_ZED
+echo 'RESTART
+phi: TORSION ATOMS=5,7,9,15
+psi: TORSION ATOMS=7,9,15,17
+opes: OPES_METAD ARG=phi,psi TEMP=300 PACE=500 SIGMA=0.15,0.15 BARRIER=50 BIASFACTOR=10 CUTOFF_SCHEME=PR NLIST NLIST_REBUILD=EXACT NLIST_ZED=FULL FILE=KERNELS.in STATE_WFILE=STATE STATE_WSTRIDE=-1
+PRINT FMT=%.15g STRIDE=1 FILE=COLVAR ARG=phi,psi,opes.*' > plumed.dat
+taskset -c 0 opt/plumed/zfast2-a64/bin/plumed driver --plumed plumed.dat --mf_xtc runs/pr1463/quick/ala2/opes/000/md.xtc
 
 # M1, KERNELS restart: restart from the KERNELS file of an adaptive-sigma explore run, read sigma0
 cat > plumed.dat << 'EOF'
