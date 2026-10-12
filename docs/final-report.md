@@ -2,20 +2,25 @@
 
 This note compares the current OPES code with the two pull requests prepared from the work in
 [kernel-cutoff.md](kernel-cutoff.md), [kernel-merging.md](kernel-merging.md), [nlist.md](nlist.md)
-and [opes-review.md](opes-review.md). One PR goes to v2.9, the oldest maintained branch, and
-replaces [plumed/plumed2#1463](https://github.com/plumed/plumed2/pull/1463). The other goes to
-master, on top of the first.
+and [opes-review.md](opes-review.md). One PR goes to v2.9, the oldest maintained branch, on top
+of [plumed/plumed2#1463](https://github.com/plumed/plumed2/pull/1463). The other goes to master, on
+top of the first.
+
+**Update, 2026-10-12: #1463 is merged into v2.9** (`b43b7c4`), with its change of the derivative:
+the forces are now the gradient of the energy-shifted kernels. The two branches were rebased on it
+(section 1). The tests of sections 3–5 were run before, on builds without that change: what they
+mean now is in section 1, "After #1463".
 
 **Summary.**
 - **The PR to v2.9** contains:
-  - the merge fix of #1463;
   - the bugs M1–M4 and E1–E5;
   - an exact neighbor list as the only behaviour;
   - a note on static biases (`UPDATE_UNTIL=0`);
+  - `FES_from_State.py` derivatives as in PLUMED after #1463;
   - faster kernel sums, as the last commit.
 
-  The kernels are unchanged. **The PR to master** adds force-shifted kernels and turns the neighbor
-  list on by default (`NLIST_OFF` to switch it off).
+  The kernels are those of v2.9 with #1463. **The PR to master** adds force-shifted kernels and
+  turns the neighbor list on by default (`NLIST_OFF` to switch it off).
 - **Regtests pass** in serial, MPI and MPI with 4 threads builds. Every changed reference is
   explained (section 2). The new regtests fail with the current code.
 - **The PR to v2.9 does not change the sampling.** 0 of 128 tests are marked in the quick tier
@@ -38,48 +43,73 @@ master, on top of the first.
 - **OPES is 1.1–3.3× faster** with the best setting of each build. With the defaults of the PR to
   master, it is 1.2–14× faster than upstream master, and MD runs take up to 53% less wall time
   (ala4).
-- **Not tested:** timings on x86, the master documentation build, and the default list with 4 or
-  more CVs (section 7). Nothing is pushed.
+- **Not tested:** timings on x86, the default list with 4 or more CVs (section 7), and the sampling
+  of the rebased v2.9 branch, whose kernels are those of #1463 (section 1).
 
 ## 1. The two PRs
 
 **PR to v2.9**, branch `opes-fixes-v2.9` of the local plumed2 repository, on top of upstream v2.9
-(`6941f1b`). Six commits, in an order that lets the last one be dropped or moved to master on its
-own:
+(`b43b7c4`, the merge of #1463). Six commits, in an order that lets the last one be dropped or
+moved to master on its own:
 
 | commit | what | references changed |
 |---|---|---|
-| `80807c2` (Pengchao Zhang) | merge kernel variances with centred moments, from #1463 without its change of the derivative; regtest `rt-opes-merge-stability` | none |
-| `06e6ed6` | M1–M4 of [opes-review.md](opes-review.md): KERNELS restart with adaptive σ, STATE writes with walkers, a data race, an integer overflow; regtest `rt-opes_metad-kernels-restart` | none |
-| `f4f1182` | E1–E5: ECV_CUSTOM without ADD_P0, restart with `_` in labels, STATE in the observation phase with MPI, CALC_WORK with walkers, CUT_CORNER; three new regtests | the 4 CUT_CORNER tests |
-| `a0f31fb` | the neighbor list becomes exact (exact rebuild rule, Z from all kernels, recursive merges over all kernels), as the only behaviour; the second value of NLIST_PARAMETERS is ignored with a warning; regtest `rt-opes-nlist-exact` | `rt-opes_metad-mw-bis`, last digit of 7 force lines (see 2) |
-| `5bcc82d` | documentation: continue with a static bias with `UPDATE_UNTIL=0` | none |
-| `58d142f` | faster kernel sums: the two-pass sum, the list rebuild and the Z update with the block code, Z at a KERNELS restart, no allocations in `calculate()` | none |
+| `a030b37` | M1–M4 of [opes-review.md](opes-review.md): KERNELS restart with adaptive σ, STATE writes with walkers, a data race, an integer overflow; regtest `rt-opes_metad-kernels-restart` | none |
+| `ba6cc50` | E1–E5: ECV_CUSTOM without ADD_P0, restart with `_` in labels, STATE in the observation phase with MPI, CALC_WORK with walkers, CUT_CORNER; three new regtests | the 4 CUT_CORNER tests |
+| `b2ca08d` | the neighbor list becomes exact (exact rebuild rule, Z from all kernels, recursive merges over all kernels), as the only behaviour; the second value of NLIST_PARAMETERS is ignored with a warning; regtest `rt-opes-nlist-exact` | `rt-opes_metad-mw-bis`, last digit of 5 force lines (see 2) |
+| `f516d94` | documentation: continue with a static bias with `UPDATE_UNTIL=0` | none |
+| `12f615a` | `FES_from_State.py` of the tutorial: `--der` without the cutoff shift, as PLUMED after #1463 | none |
+| `cd2dbb5` | faster kernel sums: the two-pass sum, the list rebuild and the Z update with the block code, Z at a KERNELS restart, no allocations in `calculate()` | none |
 
 None of the keywords added for the study (`CUTOFF_SCHEME`, `MERGE_SCHEME`, `NLIST_REBUILD`,
-`NLIST_ZED`) is in the PRs. The kernels are those of v2.9, and the merge rule is that of v2.9 with
-the centred-moment arithmetic. The CHANGES file has one entry per commit.
+`NLIST_ZED`) is in the PRs. The kernels and the merge rule are those of v2.9 with #1463. The
+CHANGES file has one entry per commit.
 
 **PR to master**, branch `opes-kernel-nlist-master`, on top of upstream master (`e5a05b1`):
 
 | commit | what | references changed |
 |---|---|---|
-| `e6d8179` | merge of the v2.9 branch, with the only conflict (the header of `OPESmetad.cpp`) resolved | – |
-| `3138a14` | force-shifted kernels (the "alternative" of [kernel-cutoff.md](kernel-cutoff.md)); regtest `rt-opes-kernel-derivative` from #1463; `FES_from_State.py` of the tutorial uses the new kernels | 14 tests (see 2) |
-| `d3e9dfa` | the neighbor list is used by default; `NLIST_OFF` switches it off; `NLIST` is a deprecated flag that only adds the `nlker` and `nlsteps` components | none |
+| `d260aa2` | merge of the v2.9 branch (with #1463), with the only conflict (the header of `OPESmetad.cpp`) resolved | – |
+| `1a5578c` | force-shifted kernels (the "alternative" of [kernel-cutoff.md](kernel-cutoff.md)); `FES_from_State.py` of the tutorial uses the new kernels | 14 tests (see 2) |
+| `7f44b0e` | the neighbor list is used by default; `NLIST_OFF` switches it off; `NLIST` is a deprecated flag that only adds the `nlker` and `nlsteps` components | none |
 
 With the neighbor list on by default, printing `opes.*` gives the same columns as before: the two
 list components appear only if the old `NLIST` flag is given, so that inputs that print them keep
 working. Giving both `NLIST` and `NLIST_OFF`, or `NLIST_PARAMETERS` or `NLIST_PACE_RESET` with
 `NLIST_OFF`, is an error.
 
+**After #1463.** #1463 was merged into v2.9 while this note was being written, as one commit
+with both of its changes: the centred-moment merge, which the first commit of the v2.9 branch
+already contained unchanged, and the derivative of the energy-shifted kernels, which the branch had
+left out. The v2.9 branch was rebased on it without its own copy of the merge commit, and its kernel
+sum uses the derivative of #1463. Two references were regenerated (section 2); every other OPES
+reference of #1463 passes unchanged.
+
+The master branch was rebuilt on the rebased v2.9 branch. Its final tree is the one tested here,
+apart from three texts: the CHANGES entries of #1463 in `CHANGES/v2.9.md`, its own CHANGES
+entry, and the README of `rt-opes-kernel-derivative`. With #1463 in v2.9, the force-shifted kernels
+of master change the forces a second time. The bias was the same before and after #1463; now
+it changes as well, in the far tails.
+
+What the tests below mean after the rebase:
+- **The PR to master** is the code tested here, so its results stand. The comparison with the
+  "current code", however, is with v2.9 before #1463.
+- **The PR to v2.9** was tested with the kernels before #1463. Its own changes (M1–M4, E1–E5,
+  the exact list, the speed-ups) do not touch the kernel shape, and they are what the 0 marked
+  tests of section 3 show. The effect of the derivative of #1463 was measured in
+  [kernel-cutoff.md](kernel-cutoff.md) (build `pr1463`): an earlier first transition in the first
+  ~0.5 ns of ala2, statistically indistinguishable from the force-shifted kernels of the PR to
+  master.
+- **The speed-ups** cost the same with either derivative: one exponential and a few
+  multiplications per kernel within the cutoff.
+
 **Builds used here.**
 
 | label | source | MPI build |
 |---|---|---|
 | `v2.9-base` ("current code") | `d650dbd`, v2.9 at the merge-base of #1463 | `v2.9-base-mpi` |
-| `pr-v29` | `1014914`, the v2.9 branch before the reference update of `a0f31fb`; same source code as `58d142f` | `pr-v29-mpi` |
-| `pr-master` | `b609c2c`, the master branch before a fix of `FES_from_State.py`; same source code as `d3e9dfa` | `pr-master-mpi` |
+| `pr-v29` | `1014914`, the v2.9 branch before the rebase on #1463; its source code differs from `cd2dbb5` only by the derivative of #1463, the `FES_from_State.py` commit and the rename of a local variable | `pr-v29-mpi` |
+| `pr-master` | `b609c2c`, the master branch before the rebase; its source code differs from `7f44b0e` only by a fix of `FES_from_State.py` and the rename of a local variable | `pr-master-mpi` |
 | `master-base` | `e5a05b1`, upstream master, for the timings of the PR to master | – |
 
 The OPES code of `d650dbd` differs from that of upstream v2.9, v2.10 and master only in input
@@ -105,18 +135,23 @@ Upstream CI runs the regtests with `PLUMED_NUM_THREADS=2`, so the threaded run m
 - **CUT_CORNER (E5):** the 4 tests that use it keep 1–6 fewer grid points, now exactly those on or
   above the cut line ([opes-review.md](opes-review.md)).
 - **`rt-opes_metad-mw-bis`** (two walkers with `NLIST NLIST_PARAMETERS=1.1,0.2 NLIST_PACE_RESET`):
-  - The last printed digit changes on 7 of 1100 force lines and on 2 of 120 kernel lines.
+  - The last printed digit changes on 7 of 1100 force lines and on 2 of 120 kernel lines (on 5
+    force lines after the rebase on #1463, whose derivative changes all the forces).
   - The new references are byte-identical to what the current code gives *without* NLIST.
   - At full precision, the current code with its list differs from the run without a list by
     1.2·10⁻⁶ (relative) in the forces. The exact list differs by 0, and the new build without a list
     differs from the current one by 1.4·10⁻¹².
   - So the old reference recorded an error of the heuristic list, not round-off.
+- **`rt-opes_metad-kernels-restart`**, new in the branch: after the rebase, its forces are those of
+  the derivative of #1463; its COLVAR and STATE references are unchanged.
 - The serial OPES regtests passed after every commit with unchanged references; the MPI ones were
-  run on the last commit.
+  run on the last commit. After the rebase, all 46 OPES regtests pass in an MPI build of the final
+  commit with `PLUMED_NUM_THREADS=2`.
 
 **Reference changes in the PR to master** (all from the force-shifted kernels; the default neighbor
 list changes no reference, serially or with MPI). The change is given relative to the largest
-force of each test:
+force of each test, against v2.9 before #1463. Against v2.9 with #1463, the same 14 tests change,
+by up to 48% of the largest force, with the same pattern:
 
 | tests | largest force change | largest kernel-height change |
 |---|---|---|
@@ -131,8 +166,8 @@ every kernel is heavy ($h/Z \sim 1$), the regime where the two kernel shapes dif
 
 **Negative controls**, i.e. the new regtests run against the current code:
 - `rt-opes-nlist-exact` fails in all 4 of its cases with the v2.9 neighbor list.
-- `rt-opes-kernel-derivative` fails with the kernels of the PR to v2.9 (force 4.065 against
-  4.111 from finite differences).
+- `rt-opes-kernel-derivative`, now in v2.9 from #1463, fails with the kernels before #1463 (force
+  4.065 against 4.111 from finite differences), and passes with those of both PRs.
 - The regtests of M1, E1–E4 were checked the same way in [opes-review.md](opes-review.md).
 
 ## 3. Sampling
@@ -320,7 +355,7 @@ the variants of [nlist.md](nlist.md) section 5 (`build/time_prs.sh`).
 
 ## 6. Other checks
 
-**Static bias after a restart** (the documentation added in `5bcc82d`).
+**Static bias after a restart** (the documentation added in `f516d94`).
 - A short OPES_METAD run wrote a STATE file. The restart had `UPDATE_UNTIL=0` and `STATE_RFILE`
   and was replayed on the same trajectory.
 - The restart deposited no kernel: KERNELS kept its 25 kernels.
@@ -347,10 +382,8 @@ the variants of [nlist.md](nlist.md) section 5 (`build/time_prs.sh`).
 
 - **x86 timing.** The branch-free periodic wrap uses a conversion to `int` on x86 builds without
   SSE4.1, which is the default x86-64 target. That path has the same logic but was never timed;
-  all timings here are on aarch64.
-- **Documentation build.** The master documentation (markdown, `addDeprecatedFlag`) was not
-  built. `nlker` and `nlsteps` are registered as components of the deprecated `NLIST` keyword,
-  which the doc tooling might flag.
+  all timings here are on aarch64. Checked on its own, it agrees with `nearbyint` on 10⁸ random
+  values, and differs only at exact half-period ties, where both choices give the same distance.
 - **Untested settings for the default neighbor list:** 4 or more CVs, many walkers, very small
   SIGMA_MIN. The worst case is a rebuild at every step, about one extra pass over the kernels.
 - **Policy.** The speed-up commit is a performance change on the oldest maintained branch. It is
@@ -363,11 +396,13 @@ the variants of [nlist.md](nlist.md) section 5 (`build/time_prs.sh`).
 - **Other copies of the post-processing script.** `FES_from_State.py` in the invemichele/opes and
   OPES-explore repositories still uses energy-shifted kernels. It needs the same change for
   STATE files written by PLUMED 2.11, which only matters for heavy kernels.
-- **#1463.** Pengchao Zhang is the author of the merge commit in the v2.9 PR. The master commit
-  that adds his derivative regtest credits him as co-author. #1463 can be closed in favour of the
-  two PRs.
-- **Nothing is pushed.** Both branches are local, in `/home/michele/workdir/opes/plumed2`
-  (worktrees `plumed2-v29` and `plumed2-master`).
+- **#1463 is merged into v2.9**, with its derivative (section 1). With the force-shifted kernels of
+  the PR to master, the forces change in v2.9 and again in 2.11. Keeping the energy-shifted kernels
+  of #1463 in master would avoid the second change, at the cost of the force jump at the cutoff.
+- **Sampling of the rebased v2.9 branch.** It was not rerun. The transient tier
+  (`-s ala2 -m opes,explore -t transient`) would check it in about the time of the original runs.
+- **Pushed** to `invemichele-peptone/plumed2`: branches `opes-fixes-v2.9` and
+  `opes-kernel-nlist-master` (worktrees `plumed2-v29` and `plumed2-master` locally).
 
 ## 8. Reproducing
 
