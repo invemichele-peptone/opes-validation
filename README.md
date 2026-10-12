@@ -106,3 +106,7 @@ Only the first 100 ala2 replicas are committed. More can be generated locally, e
 `.github/workflows/validate.yml` runs the same steps on GitHub Actions (manual trigger, with the
 two PLUMED refs as inputs) and uploads the report as an artifact. GitHub-hosted runners have
 4 cores, so only the `smoke` tier is practical there; `quick` and `full` need a self-hosted runner.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
