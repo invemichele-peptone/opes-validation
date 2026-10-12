@@ -8,9 +8,9 @@
 #   ala2-1d-opes ala2-1d-explore ala2-2d-opes ala2-2d-explore ala2-2d-jpcl          (GROMACS)
 #   ala4-3d-opes ala4-3d-explore                                                   (GROMACS, not by default)
 # Writes <outdir>/times.dat:
-#   case variant replica nsteps wall_time opes_time nker mean_nlker mean_nlsteps
+#   case variant replica nsteps wall_time opes_time nker mean_nlker mean_nlsteps update_time
 # opes_time is the time of the OPES action: forward loop, backward loop and update (the update
-# also includes the other actions, e.g. PRINT, which is negligible).
+# also includes the other actions, e.g. PRINT, which is negligible). update_time is the update alone.
 # env: VARIANTS  among none, exact, exact_p2, exact_p5, exact_p8 (default: none exact exact_p2)
 #      CORES     cores to use, one job per core at a time (default: all)
 #      REPS      replicas per case (default 3)
@@ -91,14 +91,15 @@ done
 wait
 }
 
-echo "# case variant replica nsteps wall_time opes_time nker mean_nlker mean_nlsteps" > "$out/times.dat"
+echo "# case variant replica nsteps wall_time opes_time nker mean_nlker mean_nlsteps update_time" > "$out/times.dat"
 while read -r c variant rep nsteps d cmd; do
   log=$d/md.log
   [ -f "$log" ] || log=$d/plumed.log
   opes_time=$(awk '/^PLUMED: 4A +[0-9]+ opes / || /^PLUMED: 5A +[0-9]+ opes / {t+=$6} /^PLUMED: 6 Update / {t+=$5} END {print t}' "$log")
+  update_time=$(awk '/^PLUMED: 6 Update / {print $5}' "$log")
   stats=$(awk '/^#! FIELDS/ {for (i=3; i<=NF; i++) col[$i]=i-2}
                !/^#/ {n++; nk=$col["opes.nker"]; if ("opes.nlker" in col) {nl+=$col["opes.nlker"]; if ($col["opes.nlsteps"]>0) {st+=$col["opes.nlsteps"]; ns++}}}
                END {printf "%d %.1f %.1f", nk, (("opes.nlker" in col) ? nl/n : nk), ((ns>0) ? st/ns : 0)}' "$d/COLVAR")
-  echo "$c $variant $rep $nsteps $(cat "$d/time.txt") $opes_time $stats" >> "$out/times.dat"
+  echo "$c $variant $rep $nsteps $(cat "$d/time.txt") $opes_time $stats $update_time" >> "$out/times.dat"
 done < "$jobsfile"
 echo "written $out/times.dat"

@@ -29,6 +29,7 @@ How it was done:
 | M4 | OPES_METAD, Z update | `ks*ks` overflows `unsigned` from 65,536 kernels | at some kernel counts Z is recomputed with N² evaluations (tens of seconds); result unaffected | reproduced (arithmetic) |
 | M5 | OPES_METAD, adaptive σ | `update()` returns before the STATE write during the first ADAPTIVE_SIGMA_STRIDE steps | no STATE if a checkpoint falls in that window | inspection |
 | S1 | OPES_METAD kernel sum | per-kernel early exit and data layout | a two-pass version is 2.7–3.7× faster on the kernel sum (ala4), with the same results to 4·10⁻¹⁶; in MD, ala4 runs 2.0× faster (OPES_METAD) and 1.4× faster (EXPLORE) | micro-benchmark, MD |
+| S2 | OPES_METAD, update of Z at each deposition | the changed kernels are evaluated against all kernels one at a time, as in the old sum | with the code of S1 this update is 6–8× faster, and OPES 2–9% faster with the exact neighbor list | MD |
 
 M2 and E1–E6 come from the review of OPES_EXPANDED and the ECVs; M2 was then found and
 measured in OPES_METAD as well. Line numbers refer to master c3506e974.
@@ -43,6 +44,7 @@ that fails without the fix:
 | c0b558a | exact recursive merges with `NLIST_REBUILD=EXACT` (see [nlist.md](nlist.md)) |
 | 4c1f694 | S1, the two-pass kernel sum (section 3) |
 | b880f90 | faster neighbor list rebuild, with the block code of the sum (see [nlist.md](nlist.md), section 5) |
+| 403d480 | S2, the update of Z with the block code of the sum (section 3) |
 
 - E4 is now also reproduced: in a two-walker run, swapping the trajectories should swap
   the walkers' `work`. Before the fix, walker 0 got 16.5 instead of 2.36 on the same
@@ -361,6 +363,94 @@ mean ± s.d. of 3 replicas.
   - So with a less lucky placement the 1.97× would be about 1.9×. The placement of the
     old build is not known either.
 
+### The update of Z (S2)
+
+Z is proportional to the sum of all kernels evaluated at all kernel centres. A deposition
+changes only a few kernels: it adds one, or replaces a kernel with its merge with the new
+one (more with recursive merges or walkers). So at each deposition OPES_METAD updates Z
+with the change of that sum: each changed kernel evaluated at every centre, and every
+kernel evaluated at the changed kernel's centre.
+- **Before:** this used `evaluateKernel`, one kernel at a time, as the sum did before S1:
+  about four evaluations per kernel at a deposition with a merge.
+- **Branch commit 403d480** uses the block code of the sum:
+  - For a block of kernels, one branch-free pass computes both squared distances to a
+    changed kernel: in units of its σ and of each kernel's own σ. Only the kernels within
+    the cutoff are then evaluated.
+  - The kernels are the summed ones. With `NLIST_ZED=FULL` they are the per-CV copy of
+    all kernels kept for the list rebuild (b880f90), which now also stores the heights.
+  - MPI processes take contiguous shares of the kernels and OpenMP threads blocks of 64,
+    as for the sum.
+  - That copy may now be refreshed at a deposition, before the next rebuild. The rebuild
+    still uses the smallest σ of the kernels at the time of the rebuild, so the list
+    behaves as before.
+
+Checks:
+- All 45 OPES regtests pass, with 1 and 4 threads.
+- **Replays** of [nlist.md](nlist.md), serially and with 4 threads, 4 MPI processes,
+  4 walkers, and 2 walkers × 2 processes × 2 threads:
+  - All four actions agree with b880f90 to 2·10⁻¹¹ kBT in bias and forces, and to 10⁻¹³
+    in Z. Only the order of the sums changed.
+  - Kernel counts, list sizes and rebuild intervals are identical.
+  - The exact list stays bitwise identical to no list in serial runs and with 4 walkers,
+    and agrees with it to round-off with MPI.
+- **MD** runs drift apart from those of b880f90, as any round-off change makes them do,
+  e.g. 1568 vs 1578 kernels at the end of a Müller–Brown 2D run.
+
+**MD timing**, concurrent A/B of b880f90 and 403d480 (`build/ab_nlist_cases.sh`, cases of
+[nlist.md](nlist.md), section 5):
+- Both builds use `-falign-functions=64`, against code-placement noise.
+- They run at the same time on the two halves of the X925 cores, then swap halves.
+- 6 runs per case and build, 4 for the long run.
+- "update" is PLUMED's update step, whose fixed cost is about 0.067 µs; "OPES" is the
+  whole OPES time, as in [nlist.md](nlist.md).
+
+| µs per MD step, b880f90 → 403d480 | kernels | update, no list | update, exact list | OPES, no list | OPES, exact list |
+|---|---|---|---|---|---|
+| ala2 φ, OPES_METAD | 43 | 0.067 → 0.066 | 0.068 → 0.067 | 0.62 → 0.61 | 0.63 → 0.63 |
+| ala2 φ,ψ, OPES_METAD | 768 | 0.124 → 0.106 | 0.120 → 0.104 | 1.35 → 1.33 | 0.91 → 0.89 |
+| Müller–Brown 2D, OPES_METAD | 1570 | 0.131 → 0.100 | 0.126 → 0.099 | 1.89 → 1.85 | 1.04 → 1.02 |
+| ala2 φ,ψ, jpcl | 3262 | 0.218 → 0.165 | 0.207 → 0.162 | 3.08 → 3.03 | 1.17 → 1.12 |
+| ala2 φ,ψ, jpcl, long | 10⁴ | 0.614 → 0.437 | 0.576 → 0.416 | 8.88 → 8.68 | 2.22 → 2.01 |
+| ala4 3 CVs, EXPLORE | 1563 | 0.186 → 0.122 | 0.188 → 0.124 | 3.10 → 3.02 | 3.05 → 2.98 |
+| ala4 3 CVs, OPES_METAD | 8010 | 0.263 → 0.163 | 0.237 → 0.146 | 6.64 → 6.51 | 1.71 → 1.61 |
+
+- **The update step** loses 30–55% of its cost above the fixed one.
+- **OPES** gets 2–9% faster with the exact list and about 2% faster without, since both
+  lose about the same absolute time. The wall time of the long jpcl run drops by 1%: 1032 →
+  1022 s without a list, 695 → 686 s with it.
+- **The speed-up of the exact list** grows a little, e.g. from 4.0× to 4.3× in the long
+  jpcl run. These builds place the sum without a list less luckily than the 4c1f694 build
+  used in [nlist.md](nlist.md), which gave 3.5× there.
+
+**Where the rest goes.** A build with timers around the parts of a deposition (not
+committed) ran the short jpcl and ala4 cases once. Means over the run, in µs per
+deposition:
+
+| | jpcl, no list | jpcl, exact list | ala4, no list | ala4, exact list |
+|---|---|---|---|---|
+| adding the kernel: merge search and KERNELS file | 14.8 | 8.7 | 19.7 | 9.1 |
+| copy of the kernels into the per-CV arrays | 3.1 | 5.7 | 8.7 | 11.5 |
+| update of Z | 5.4 | 5.4 | 8.0 | 8.1 |
+| list rebuilds between two depositions (calculate step) | – | 45 | – | 34 |
+
+- **The update of Z itself is 6–8× faster.** Its old cost is the new one, plus the time
+  saved, plus the copy, which the sum used to make at the next step.
+- **The copy** is not new work: before, it was made at the next step (no list) or at the
+  next rebuild (exact list).
+- **The merge search is now the largest part of a deposition.** It still compares one
+  kernel at a time with `Value::difference`. It goes through all kernels twice per merge
+  without a list, and once with the exact list, whose recursive merges search all kernels
+  (c0b558a).
+  - The block code could do this too, but the per-CV copies would have to be patched
+    after each merge.
+  - At ≤20 µs per deposition, i.e. ≤0.04 µs per step with PACE=500, this is not worth it
+    for now.
+- **In the long jpcl run, most of the remaining update time is writing STATE.** That input
+  stores the state every 100 depositions (`STORE_STATES`). Each write takes up to 27 ms
+  with 10⁴ kernels, 0.2–0.3 µs per step in total, for a 1 GB file.
+- **With the exact list, the rebuilds cost more than the whole update.** They happen in
+  the calculate step: every ~37 steps for jpcl, about 3 µs each.
+
 ## 4. Reproducing
 
 PLUMED builds: `pr1463` and `nlist` as in [nlist.md](nlist.md); `nlist-mpi` with
@@ -373,6 +463,16 @@ build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 /path/to/plu
 CORES="5 6 7 8 9 15 16 17 18 19" build/time_builds.sh runs/kernel-sum-timing nlist fast
 build/replay_nlist.sh fast pr1463 runs/nlist-replay-fast
 uv run python build/check_replay.py runs/nlist-replay-fast runs/nlist-replay   # new vs old build
+
+# S2, update of Z: replays as for S1 (also with THREADS, NP, WALKERS), and the concurrent A/B
+build/build_plumed.sh zfast 403d480b42b21021bc00389119a7abbef2501265 /path/to/plumed2
+build/replay_nlist.sh zfast pr1463 runs/nlist-replay-zfast
+uv run python build/check_replay.py runs/nlist-replay-zfast runs/nlist-replay-fastnl   # vs b880f90
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh fastnl-a64 b880f90cf2d59fd1268c8f8c2ad90ea7d09a5013 /path/to/plumed2
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast-a64 403d480b42b21021bc00389119a7abbef2501265 /path/to/plumed2
+build/ab_nlist_cases.sh runs/zed-ab fastnl-a64 zfast-a64 ala2-1d-opes mueller2d-opes ala2-2d-opes ala2-2d-jpcl ala4-3d-opes ala4-3d-explore
+SCALE=10 REPS=2 build/ab_nlist_cases.sh runs/zed-ab-long fastnl-a64 zfast-a64 ala2-2d-jpcl
+uv run python build/summarize_nlist_cases.py --pool runs/zed-ab/zfast-a64-1 runs/zed-ab/zfast-a64-2
 
 # M1, KERNELS restart: restart from the KERNELS file of an adaptive-sigma explore run, read sigma0
 cat > plumed.dat << 'EOF'

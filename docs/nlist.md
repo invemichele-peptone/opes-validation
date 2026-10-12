@@ -413,10 +413,15 @@ ala4).*
 - **Remaining cost with the list:** about 2.2 µs per step at 10⁴ kernels (long jpcl run).
   - Calculate takes 1.57 µs: the fixed 0.47, the sum over ~150 listed kernels (~0.1),
     and about 1 µs for the rebuilds and the copy of the listed kernels after each.
-  - Update takes 0.59 µs, the same as without a list. Most of it is the update of Z at
-    each deposition. It evaluates the new or merged kernel, and the one it replaces,
-    against all kernels, one kernel at a time with `evaluateKernel`.
-    The block code could speed this up too, both with and without the list.
+  - Update takes 0.59 µs, the same as without a list.
+    - 0.2–0.3 µs is writing STATE, which this input does every 100 depositions
+      (`STORE_STATES`).
+    - About 0.2 µs was the update of Z at each deposition. It evaluated the new or merged
+      kernel, and the one it replaces, against all kernels, one kernel at a time with
+      `evaluateKernel`.
+    - Branch commit 403d480 does this with the block code
+      ([opes-review.md](opes-review.md), S2). Update then takes 0.42 µs and OPES 2.0 µs
+      per step, in builds aligned against placement noise.
 - **Absolute numbers are small.** The largest saving with 2 CVs, ~5.6 µs per step,
   matters for small systems.
   - A GPU run at 500–1000 ns/day with 2 fs steps takes 170–350 µs per step. If PLUMED's
