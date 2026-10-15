@@ -48,7 +48,7 @@ mean now is in section 1, "After #1463".
 
 ## 1. The two PRs
 
-**PR to v2.9**, branch `opes-fixes-v2.9` of the local plumed2 repository, on top of upstream v2.9
+**PR to v2.9**, [plumed/plumed2#1499](https://github.com/plumed/plumed2/pull/1499) (branch `opes-fixes-v2.9`), on top of upstream v2.9
 (`b43b7c4`, the merge of #1463). Six commits, in an order that lets the last one be dropped or
 moved to master on its own:
 
@@ -65,7 +65,11 @@ None of the keywords added for the study (`CUTOFF_SCHEME`, `MERGE_SCHEME`, `NLIS
 `NLIST_ZED`) is in the PRs. The kernels and the merge rule are those of v2.9 with #1463. The
 CHANGES file has one entry per commit.
 
-**PR to master**, branch `opes-kernel-nlist-master`, on top of upstream master (`e5a05b1`):
+**PR to master**, branch `opes-kernel-nlist-master`, on top of upstream master (`e5a05b1`), kept
+as the tag `opes-validation/pr-master-rebased` of [invemichele-peptone/plumed2](https://github.com/invemichele-peptone/plumed2).
+[plumed/plumed2#1500](https://github.com/plumed/plumed2/pull/1500) has
+the same two changes rebased on a later master, `fa437f7` (identical to `bdd55e5`) and `8877225`
+(`74a1f4e` with one more regtest switched to `NLIST_OFF`):
 
 | commit | what | references changed |
 |---|---|---|
@@ -112,8 +116,8 @@ What the tests below mean after the rebase:
 | label | source | MPI build |
 |---|---|---|
 | `v2.9-base` ("current code") | `d650dbd`, v2.9 at the merge-base of #1463 | `v2.9-base-mpi` |
-| `pr-v29` | `1014914`, the v2.9 branch before the rebase on #1463; its source code differs from `c002b59` only by the derivative of #1463, the `FES_from_State.py` commit, the rename of a local variable, and the x86 fallback of the periodic wrap (now plain `nearbyint`, the same code on aarch64) | `pr-v29-mpi` |
-| `pr-master` | `b609c2c`, the master branch before the rebase; its source code differs from `74a1f4e` only by a fix of `FES_from_State.py`, the rename of a local variable, the x86 fallback of the periodic wrap, and the automatic list reset with walkers | `pr-master-mpi` |
+| `pr-v29` | `1014914` (tag `opes-validation/pr-v29` of [invemichele-peptone/plumed2](https://github.com/invemichele-peptone/plumed2)), the v2.9 branch before the rebase on #1463; its source code differs from `c002b59` only by the derivative of #1463, the `FES_from_State.py` commit, the rename of a local variable, and the x86 fallback of the periodic wrap (now plain `nearbyint`, the same code on aarch64) | `pr-v29-mpi` |
+| `pr-master` | `b609c2c` (tag `opes-validation/pr-master`), the master branch before the rebase; its source code differs from `74a1f4e` only by a fix of `FES_from_State.py`, the rename of a local variable, the x86 fallback of the periodic wrap, and the automatic list reset with walkers | `pr-master-mpi` |
 | `master-base` | `e5a05b1`, upstream master, for the timings of the PR to master | – |
 
 The OPES code of `d650dbd` differs from that of upstream v2.9, v2.10 and master only in input
@@ -407,20 +411,20 @@ the variants of [nlist.md](nlist.md) section 5 (`build/time_prs.sh`).
   of #1463 in master would avoid the second change, at the cost of the force jump at the cutoff.
 - **Sampling of the rebased v2.9 branch.** It was not rerun. The transient tier
   (`-s ala2 -m opes,explore -t transient`) would check it in about the time of the original runs.
-- **Pushed** to `invemichele-peptone/plumed2`: branches `opes-fixes-v2.9` and
-  `opes-kernel-nlist-master` (worktrees `plumed2-v29` and `plumed2-master` locally).
+- **Opened** as [plumed/plumed2#1499](https://github.com/plumed/plumed2/pull/1499) (head `c002b59`)
+  and [plumed/plumed2#1500](https://github.com/plumed/plumed2/pull/1500) (rebased, see section 1).
 
 ## 8. Reproducing
 
 ```bash
 uv sync
 # PLUMED: current code and the two branches, serial and MPI (OpenMPI built into opt/openmpi)
+FORK=https://github.com/invemichele-peptone/plumed2.git   # tags opes-validation/pr-v29 and pr-master
 build/build_plumed.sh v2.9-base d650dbd5a52ea8954950f823da5214f54bf837b5
-MPI=opt/openmpi build/build_plumed.sh v2.9-base-mpi d650dbd5a52ea8954950f823da5214f54bf837b5 /path/to/plumed2
-for b in pr-v29:opes-fixes-v2.9 pr-master:opes-kernel-nlist-master; do
-  sha=$(git -C /path/to/plumed2 rev-parse ${b#*:})
-  build/build_plumed.sh ${b%%:*} $sha /path/to/plumed2
-  MPI=opt/openmpi build/build_plumed.sh ${b%%:*}-mpi $sha /path/to/plumed2
+MPI=opt/openmpi build/build_plumed.sh v2.9-base-mpi d650dbd5a52ea8954950f823da5214f54bf837b5
+for b in pr-v29:10149149afd81d7685f576ed549c96581dfb06c5 pr-master:b609c2c1ef716761ac244c3eda8bc06042ee3bea; do
+  build/build_plumed.sh ${b%%:*} ${b#*:} $FORK
+  MPI=opt/openmpi build/build_plumed.sh ${b%%:*}-mpi ${b#*:} $FORK
 done
 # GROMACS, serial and MPI, runtime-patched
 build/build_gromacs.sh 2024.3 v2.9-base

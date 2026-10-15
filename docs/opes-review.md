@@ -35,7 +35,7 @@ How it was done:
 M2 and E1–E6 come from the review of OPES_EXPANDED and the ECVs; M2 was then found and
 measured in OPES_METAD as well. Line numbers refer to master c3506e974.
 
-**Status: fixed on the plumed2 branch `opes-force-shifted-kernel`**, each with a regtest
+**Status: fixed on the plumed2 branch [`opes-force-shifted-kernel`](https://github.com/invemichele-peptone/plumed2/tree/opes-force-shifted-kernel)**, each with a regtest
 that fails without the fix:
 
 | commit | what |
@@ -544,35 +544,38 @@ Checks of e0f56f8:
 
 ## 4. Reproducing
 
-PLUMED builds: `pr1463` and `nlist` as in [nlist.md](nlist.md); `nlist-mpi` with
-`MPI=opt/openmpi build/build_plumed.sh nlist-mpi <sha> /path/to/plumed2`.
+PLUMED builds: `pr1463`, `nlist` and `nlist-mpi` as in [nlist.md](nlist.md); the others are
+commits of the same branch.
 
 ```bash
+FORK=https://github.com/invemichele-peptone/plumed2.git   # branch opes-force-shifted-kernel
 # S1, kernel-sum micro-benchmark, and MD timing of the old and new builds
 bench/kernel_sum.sh nlist pr1463
-build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 /path/to/plumed2
+build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 $FORK
 CORES="5 6 7 8 9 15 16 17 18 19" build/time_builds.sh runs/kernel-sum-timing nlist fast
 build/replay_nlist.sh fast pr1463 runs/nlist-replay-fast
 uv run python build/check_replay.py runs/nlist-replay-fast runs/nlist-replay   # new vs old build
 
 # S2, update of Z: replays as for S1 (also with THREADS, NP, WALKERS), and the concurrent A/B
-build/build_plumed.sh zfast 403d480b42b21021bc00389119a7abbef2501265 /path/to/plumed2
+build/build_plumed.sh zfast 403d480b42b21021bc00389119a7abbef2501265 $FORK
 build/replay_nlist.sh zfast pr1463 runs/nlist-replay-zfast
 uv run python build/check_replay.py runs/nlist-replay-zfast runs/nlist-replay-fastnl   # vs b880f90
-CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh fastnl-a64 b880f90cf2d59fd1268c8f8c2ad90ea7d09a5013 /path/to/plumed2
-CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast-a64 403d480b42b21021bc00389119a7abbef2501265 /path/to/plumed2
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh fastnl-a64 b880f90cf2d59fd1268c8f8c2ad90ea7d09a5013 $FORK
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast-a64 403d480b42b21021bc00389119a7abbef2501265 $FORK
 build/ab_nlist_cases.sh runs/zed-ab fastnl-a64 zfast-a64 ala2-1d-opes mueller2d-opes ala2-2d-opes ala2-2d-jpcl ala4-3d-opes ala4-3d-explore
 SCALE=10 REPS=2 build/ab_nlist_cases.sh runs/zed-ab-long fastnl-a64 zfast-a64 ala2-2d-jpcl
 uv run python build/summarize_nlist_cases.py --pool runs/zed-ab/zfast-a64-1 runs/zed-ab/zfast-a64-2
 
 # S3: per-step cost and KERNELS restart (e0f56f8), and the scan of the per-kernel skin
-build/build_plumed.sh zfast2 e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d /path/to/plumed2
-CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast2-a64 e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d /path/to/plumed2
+build/build_plumed.sh zfast2 e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d $FORK
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh zfast2-a64 e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d $FORK
 build/replay_nlist.sh zfast2 pr1463 runs/nlist-replay-zfast2
 uv run python build/check_replay.py runs/nlist-replay-zfast2 runs/nlist-replay-zfast
 build/ab_nlist_cases.sh runs/floor-ab zfast-a64 zfast2-a64 ala2-1d-opes mueller1d-opes ala2-2d-opes mueller2d-opes ala2-2d-jpcl ala4-3d-opes
-# the skin scan: commit the patch on a branch from e0f56f8, build it as skinscan-a64, then for f in 1 2 4 8
-git -C /path/to/plumed2 apply /path/to/opes-validation/build/patches/nlist-skin-scan.patch
+# the skin scan: the patch committed on e0f56f8, built as skinscan-a64, then for f in 1 2 4 8
+git clone -q $FORK opt/src/skinscan && git -C opt/src/skinscan checkout -q -b skinscan e0f56f8ca55d8a8df84fcbc9b84142f53a00ef5d
+git -C opt/src/skinscan apply "$PWD"/build/patches/nlist-skin-scan.patch && git -C opt/src/skinscan commit -qam "skin scan"
+CXXFLAGS="-O3 -falign-functions=64" build/build_plumed.sh skinscan-a64 skinscan "$PWD"/opt/src/skinscan
 OPES_SKIN_FACTOR=$f VARIANTS=exact REPS=2 CORES="5 6 7 8 9" build/time_nlist_cases.sh runs/skinscan/f$f skinscan-a64 \
   ala2-1d-opes ala2-2d-opes mueller2d-opes ala2-2d-jpcl mueller2d-explore ala4-3d-opes ala4-3d-explore
 # KERNELS restart: KERNELS.in from runs/zed-ab-long/zfast-a64-1/ala2-2d-jpcl-exact-0, timed with and without NO_ZED

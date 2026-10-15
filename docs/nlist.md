@@ -95,8 +95,8 @@ rebuilds first. Sketch with $r_c = 2\sigma$; real cutoffs are 5–7σ.*
 
 ## 3. The fix
 
-Two options in `OPESmetad.cpp`, on the local branch `opes-force-shifted-kernel` (commit
-`160bdfc`). The defaults (`PLAIN`) reproduce v2.9.
+Two options in `OPESmetad.cpp`, on the branch
+[`opes-force-shifted-kernel`](https://github.com/invemichele-peptone/plumed2/tree/opes-force-shifted-kernel) (commit `160bdfc`). The defaults (`PLAIN`) reproduce v2.9.
 
 - **`NLIST_REBUILD=EXACT`** rebuilds when
   $\sum_i \big((s_i-c_{{\rm nl},i})/\sigma_{{\rm min},i}\big)^2 > (\sqrt{P_0}-1)^2\,r_c^2$.
@@ -484,8 +484,9 @@ ala4).*
 
 ```bash
 uv sync
-build/build_plumed.sh pr1463 pr/1463
-build/build_plumed.sh nlist 160bdfcf3a345ca03eb585ac84a6a2f416db1285 /path/to/plumed2
+FORK=https://github.com/invemichele-peptone/plumed2.git   # branch opes-force-shifted-kernel
+build/build_plumed.sh pr1463 db576335168aaa9d22d7f22f23169d39fbf0146f   # #1463 as tested
+build/build_plumed.sh nlist 160bdfcf3a345ca03eb585ac84a6a2f416db1285 $FORK
 build/build_gromacs.sh 2024.3 v2.9-base   # or any PLUMED to patch with
 uv run opesval run -p pr1463 -t quick                 # if not run already
 uv run opesval run -p nlist -t quick --opes-extra "CUTOFF_SCHEME=PR NLIST_REBUILD=EXACT NLIST_ZED=FULL"
@@ -494,7 +495,7 @@ build/replay_nlist.sh nlist pr1463          # needs the quick-tier trajectories 
 uv run python build/check_replay.py runs/nlist-replay
 build/time_nlist.sh nlist runs/nlist-timing  # on an otherwise idle machine
 # parallel runs: build OpenMPI 4.1.6 into opt/openmpi first, then
-MPI=opt/openmpi build/build_plumed.sh nlist-mpi 160bdfcf3a345ca03eb585ac84a6a2f416db1285 /path/to/plumed2
+MPI=opt/openmpi build/build_plumed.sh nlist-mpi 160bdfcf3a345ca03eb585ac84a6a2f416db1285 $FORK
 THREADS=4 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-omp4
 NP=4 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-mpi4
 WALKERS=4 build/replay_nlist.sh nlist-mpi pr1463 runs/nlist-replay-mw4
@@ -503,8 +504,8 @@ uv run python build/check_replay.py runs/nlist-replay-mw4                      #
 uv run python build/check_replay.py runs/nlist-replay-mw4-mpi2 runs/nlist-replay-mw4  # vs serial
 uv run python docs/make_figures.py figure_nlist_scheme figure_nlist_replay figure_nlist_timing
 # 1 to 3 CVs (section 5): fast = branch commit 4c1f694, fastnl = b880f90, on the 10 X925 cores
-build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 /path/to/plumed2
-build/build_plumed.sh fastnl b880f90cf2d59fd1268c8f8c2ad90ea7d09a5013 /path/to/plumed2
+build/build_plumed.sh fast 4c1f694acbfbd48a3b27f71afad0cbe815905b75 $FORK
+build/build_plumed.sh fastnl b880f90cf2d59fd1268c8f8c2ad90ea7d09a5013 $FORK
 export CORES="5 6 7 8 9 15 16 17 18 19"
 build/time_nlist_cases.sh runs/nlist-lowdim fast
 VARIANTS="none exact" build/time_nlist_cases.sh runs/nlist-3d fast ala4-3d-opes ala4-3d-explore

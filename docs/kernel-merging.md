@@ -75,8 +75,8 @@ and gives a narrower result (σ = 0.76 instead of 0.85).*
 
 ## 2. Implementation
 
-The rule is selected by `MERGE_SCHEME=PLAIN|SPLIT` on the local branch
-`opes-force-shifted-kernel` (commit `740f1fe`, then `a7ac61f`), together with
+The rule is selected by `MERGE_SCHEME=PLAIN|SPLIT` on the branch
+[`opes-force-shifted-kernel`](https://github.com/invemichele-peptone/plumed2/tree/opes-force-shifted-kernel) (commit `740f1fe`, then `a7ac61f`), together with
 `CUTOFF_SCHEME=PLAIN|PR|ALTERNATIVE`. Defaults reproduce v2.9.
 
 Commit `a7ac61f` adds two hybrids, to separate the two changes in SPLIT:
@@ -433,10 +433,11 @@ second-order effect compared with compressing at all.
 
 ```bash
 uv sync
+FORK=https://github.com/invemichele-peptone/plumed2.git   # branch opes-force-shifted-kernel
 build/build_plumed.sh v2.9-base d650dbd5a52ea8954950f823da5214f54bf837b5
-build/build_plumed.sh pr1463 pr/1463
-build/build_plumed.sh schemes 740f1fe11dcffcb0b8fc626f3ac30b64356d9af2 /path/to/plumed2
-build/build_plumed.sh schemes2 a7ac61f33bb9d73fceba0f316bc3cb57aac45f59 /path/to/plumed2
+build/build_plumed.sh pr1463 db576335168aaa9d22d7f22f23169d39fbf0146f   # #1463 as tested
+build/build_plumed.sh schemes 740f1fe11dcffcb0b8fc626f3ac30b64356d9af2 $FORK
+build/build_plumed.sh schemes2 a7ac61f33bb9d73fceba0f316bc3cb57aac45f59 $FORK
 build/build_gromacs.sh 2024.3 v2.9-base
 build/make_tprs.sh ala2 2024.3 500
 build/make_tprs.sh ala4 2024.3 50

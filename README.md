@@ -22,7 +22,7 @@ uv sync
 
 # PLUMED versions to compare: build/build_plumed.sh <label> <ref> [repo]
 build/build_plumed.sh v2.9-base d650dbd5a52ea8954950f823da5214f54bf837b5
-build/build_plumed.sh pr1463 pr/1463
+build/build_plumed.sh pr1463 db576335168aaa9d22d7f22f23169d39fbf0146f   # #1463 as tested; pr/1463 is its current head
 
 # GROMACS, patched in runtime mode with the oldest PLUMED to be tested
 build/build_gromacs.sh 2024.3 v2.9-base
@@ -62,6 +62,16 @@ Completed runs are reused, so `run` can be interrupted and restarted, or extende
 - [docs/nlist.md](docs/nlist.md): the OPES neighbor list, why it is not exact, and an exact version with the same speed.
 - [docs/opes-review.md](docs/opes-review.md): a review of the OPES module, with the bugs found (most reproduced), a faster kernel sum and a faster update of Z.
 - [docs/final-report.md](docs/final-report.md): the two proposed PRs (to v2.9 and to master) against the current code: regtests, sampling, MPI and multiple walkers with GROMACS built with MPI, and speed.
+
+Apart from upstream commits, the PLUMED builds of the notes come from
+[invemichele-peptone/plumed2](https://github.com/invemichele-peptone/plumed2), and `build/build_plumed.sh`
+fetches them by commit from `https://github.com/invemichele-peptone/plumed2.git`.
+The first four notes use the branch
+[`opes-force-shifted-kernel`](https://github.com/invemichele-peptone/plumed2/tree/opes-force-shifted-kernel).
+The final report tested [#1499](https://github.com/plumed/plumed2/pull/1499) and
+[#1500](https://github.com/plumed/plumed2/pull/1500) before their last rebase; those commits are kept
+as the tags `opes-validation/pr-v29`, `opes-validation/pr-master` and
+`opes-validation/pr-master-rebased`.
 
 ## Commands
 
